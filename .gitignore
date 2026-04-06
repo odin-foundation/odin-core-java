@@ -1,0 +1,13 @@
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.logs
+*.iml
+.idea/
+.settings/
+.classpath
+.project
+.DS_Store
+Thumbs.db
