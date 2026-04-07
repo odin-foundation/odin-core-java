@@ -40,11 +40,15 @@ public final class JsonExport {
         var sections = new LinkedHashMap<String, List<Map.Entry<String, OdinValue>>>();
         var arraySections = new LinkedHashMap<String, List<List<Map.Entry<String, OdinValue>>>>();
         var sectionOrder = new ArrayList<String>();
+        var topLevelScalars = new ArrayList<Map.Entry<String, OdinValue>>();
 
         for (var entry : doc.getAssignments()) {
             String key = entry.getKey();
             int dotIndex = key.indexOf('.');
-            if (dotIndex <= 0) continue;
+            if (dotIndex <= 0) {
+                topLevelScalars.add(Map.entry(key, entry.getValue()));
+                continue;
+            }
 
             String section = key.substring(0, dotIndex);
             String field = key.substring(dotIndex + 1);
@@ -86,7 +90,11 @@ public final class JsonExport {
             }
         }
 
-        // Write non-$ sections first, then $
+        // Top-level scalars first, then non-$ sections, then $
+        for (var entry : topLevelScalars) {
+            writer.name(entry.getKey());
+            writeValue(writer, entry.getValue(), preserveTypes);
+        }
         for (String name : sectionOrder) {
             if ("$".equals(name)) continue;
             writeSectionOrArray(writer, name, sections, arraySections, preserveTypes);

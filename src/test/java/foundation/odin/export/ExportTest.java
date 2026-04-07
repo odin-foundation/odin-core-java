@@ -83,6 +83,22 @@ class ExportTest {
             assertTrue(json.contains("{"));
         }
 
+        @Test void topLevelScalars() {
+            var doc = OdinParser.parse("name = \"Alice\"\nage = ##30\n", ParseOptions.DEFAULT);
+            var json = JsonExport.toJson(doc);
+            assertTrue(json.contains("Alice"), "expected name preserved, got: " + json);
+            assertTrue(json.contains("30"), "expected age preserved, got: " + json);
+        }
+
+        @Test void topLevelScalarsWithSection() {
+            // Top-level scalars must survive even when followed by a section reset.
+            var doc = OdinParser.parse("name = \"Alice\"\nage = ##30\n\n{Address}\ncity = \"Portland\"\n", ParseOptions.DEFAULT);
+            var json = JsonExport.toJson(doc);
+            assertTrue(json.contains("Alice"));
+            assertTrue(json.contains("30"));
+            assertTrue(json.contains("Portland"));
+        }
+
         @Test void dateValues() {
             var doc = OdinParser.parse("{Data}\ndate = 2024-01-15\n", ParseOptions.DEFAULT);
             var json = JsonExport.toJson(doc);
