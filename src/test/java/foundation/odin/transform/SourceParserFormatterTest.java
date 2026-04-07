@@ -855,4 +855,205 @@ class SourceParserFormatterTest {
         assertTrue(result.contains("!"));
         assertTrue(result.contains("*"));
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    //  Tabular ragged sub-array guard tests
+    // ═════════════════════════════════════════════════════════════════
+
+    private static DynValue rowWithStringTags(String slug, String... tags) {
+        var tagDyns = new java.util.ArrayList<DynValue>();
+        for (var t : tags) tagDyns.add(DynValue.ofString(t));
+        return DynValue.ofObject(List.of(
+                Map.entry("slug", DynValue.ofString(slug)),
+                Map.entry("tags", DynValue.ofArray(tagDyns))
+        ));
+    }
+
+    private static DynValue rowWithIntTags(String slug, int... tags) {
+        var tagDyns = new java.util.ArrayList<DynValue>();
+        for (var t : tags) tagDyns.add(DynValue.ofInteger(t));
+        return DynValue.ofObject(List.of(
+                Map.entry("slug", DynValue.ofString(slug)),
+                Map.entry("tags", DynValue.ofArray(tagDyns))
+        ));
+    }
+
+    /** Asserts the output does not emit a tabular block whose column list
+     *  includes an indexed sub-array column like `tags[0]`. */
+    private static void assertNoRaggedTabular(String result) {
+        for (var rawLine : result.split("\n")) {
+            String line = rawLine.trim();
+            if (!line.startsWith("{") || !line.contains("[] :")) continue;
+            int colonIdx = line.indexOf("[] :");
+            String cols = line.substring(colonIdx + 4);
+            // Strip trailing '}'
+            int closeIdx = cols.lastIndexOf('}');
+            if (closeIdx >= 0) cols = cols.substring(0, closeIdx);
+            // Look for an indexed sub-array column: word[N]
+            if (cols.matches(".*[A-Za-z_][A-Za-z0-9_]*\\[\\d+\\].*")) {
+                fail("Unexpected ragged tabular column header: " + line);
+            }
+        }
+    }
+
+    @Test void odinFormatter_RaggedStringSubArrays_NotEmittedAsWideTabular() {
+        var rows = DynValue.ofArray(List.of(
+                rowWithStringTags("a", "x"),
+                rowWithStringTags("b", "x", "y", "z"),
+                rowWithStringTags("c", "x", "y")
+        ));
+        var obj = DynValue.ofObject(List.of(Map.entry("rows", rows)));
+        var result = OdinFormatter.format(obj, null);
+        assertNoRaggedTabular(result);
+    }
+
+    @Test void odinFormatter_RaggedNumericSubArrays_NotEmittedAsWideTabular() {
+        var rows = DynValue.ofArray(List.of(
+                rowWithIntTags("a", 1),
+                rowWithIntTags("b", 1, 2, 3, 4, 5),
+                rowWithIntTags("c", 1, 2)
+        ));
+        var obj = DynValue.ofObject(List.of(Map.entry("rows", rows)));
+        var result = OdinFormatter.format(obj, null);
+        assertNoRaggedTabular(result);
+    }
+
+    @Test void odinFormatter_RaggedSubArrays_RoundTripPreservesData() {
+        var rows = DynValue.ofArray(List.of(
+                rowWithStringTags("a", "x"),
+                rowWithStringTags("b", "x", "y", "z")
+        ));
+        var obj = DynValue.ofObject(List.of(Map.entry("rows", rows)));
+        var result = OdinFormatter.format(obj, null);
+        assertTrue(result.contains("\"a\""), "missing 'a' in:\n" + result);
+        assertTrue(result.contains("\"b\""), "missing 'b' in:\n" + result);
+        // Guarantee: no wide ragged tabular column header was emitted
+        assertNoRaggedTabular(result);
+        // Post-fix: nested tag values must survive in the fallback record blocks
+        assertTrue(result.contains("\"x\""), "missing tag 'x' in:\n" + result);
+        assertTrue(result.contains("\"y\""), "missing tag 'y' in:\n" + result);
+        assertTrue(result.contains("\"z\""), "missing tag 'z' in:\n" + result);
+        // Round-trip via the ODIN parser and the JSON exporter: data must match
+        var parsed = foundation.odin.Odin.parse(result);
+        String roundtrip = foundation.odin.Odin.serialize(parsed);
+        assertTrue(roundtrip.contains("\"x\"") && roundtrip.contains("\"y\"") && roundtrip.contains("\"z\""),
+                "round-trip lost tag data:\n" + roundtrip);
+        assertTrue(roundtrip.contains("\"a\"") && roundtrip.contains("\"b\""),
+                "round-trip lost slug data:\n" + roundtrip);
+    }
+
+    @Test void odinFormatter_DenseScalarRecords_TabularPreserved() {
+        var rows = DynValue.ofArray(List.of(
+                DynValue.ofObject(List.of(
+                        Map.entry("slug", DynValue.ofString("a")),
+                        Map.entry("name", DynValue.ofString("Alpha"))
+                )),
+                DynValue.ofObject(List.of(
+                        Map.entry("slug", DynValue.ofString("b")),
+                        Map.entry("name", DynValue.ofString("Bravo"))
+                ))
+        ));
+        var obj = DynValue.ofObject(List.of(Map.entry("rows", rows)));
+        var result = OdinFormatter.format(obj, null);
+        // Tabular header with both columns should appear
+        assertTrue(result.contains("{rows[] : slug, name}") || result.contains("{rows[] : name, slug}"),
+                "Expected tabular header for dense scalar records, got:\n" + result);
+    }
+
+    @Test void odinFormatter_UniformWidthSubArrays_EmittedAsTabular() {
+        // Post Bug-1 fix: when all records share the same sub-array length,
+        // the formatter should emit a tabular block with indexed columns
+        // (matching the TS reference).
+        var rows = DynValue.ofArray(List.of(
+                rowWithStringTags("a", "x", "y"),
+                rowWithStringTags("b", "p", "q")
+        ));
+        var obj = DynValue.ofObject(List.of(Map.entry("rows", rows)));
+        var result = OdinFormatter.format(obj, null);
+        assertTrue(result.contains("{rows[] : slug, tags[0], tags[1]}"),
+                "Expected uniform-width tabular header, got:\n" + result);
+        // Round-trip preserves data
+        var parsed = foundation.odin.Odin.parse(result);
+        String roundtrip = foundation.odin.Odin.serialize(parsed);
+        assertTrue(roundtrip.contains("\"x\"") && roundtrip.contains("\"q\""),
+                "round-trip lost tag data:\n" + roundtrip);
+    }
+
+    @Test void odinFormatter_LargeRaggedFixture_NoWidePadding() {
+        // 20 records with widely varying sub-array widths. The TypeScript
+        // bug produced output 24% larger than JSON for this shape; the fix
+        // recovers it via nested form. Java is already on the safe path
+        // — verify no indexed sub-array tabular header is emitted.
+        var rowList = new java.util.ArrayList<DynValue>();
+        for (int i = 0; i < 20; i++) {
+            int width = (i * 7) % 30 + 1;
+            String[] tags = new String[width];
+            for (int j = 0; j < width; j++) tags[j] = "t" + j;
+            rowList.add(rowWithStringTags("row" + i, tags));
+        }
+        var obj = DynValue.ofObject(List.of(Map.entry("rows", DynValue.ofArray(rowList))));
+        var result = OdinFormatter.format(obj, null);
+        assertNoRaggedTabular(result);
+        // Sanity: every row's slug must be present
+        for (int i = 0; i < 20; i++) assertTrue(result.contains("\"row" + i + "\""));
+    }
+
+    @Test void odinFormatter_ComplexObject_LosslessRoundTrip() {
+        // Build a complex object with nested objects and scalars, serialize,
+        // re-parse, and assert all leaf values survive.
+        var inner = DynValue.ofObject(List.of(
+                Map.entry("line1", DynValue.ofString("123 Main")),
+                Map.entry("city", DynValue.ofString("Boston"))
+        ));
+        var obj = DynValue.ofObject(List.of(
+                Map.entry("name", DynValue.ofString("Alice")),
+                Map.entry("age", DynValue.ofInteger(30)),
+                Map.entry("address", inner)
+        ));
+        String odin = OdinFormatter.format(obj, null);
+        var parsed = foundation.odin.Odin.parse(odin);
+        String reserialized = foundation.odin.Odin.serialize(parsed);
+        assertTrue(reserialized.contains("\"Alice\""));
+        assertTrue(reserialized.contains("##30") || reserialized.contains("30"));
+        assertTrue(reserialized.contains("\"123 Main\""));
+        assertTrue(reserialized.contains("\"Boston\""));
+    }
+
+    @Test void odinFormatter_RecordsWithNestedArraysAndObjects_FullRoundTrip() {
+        // Array of records where each record has a nested array AND a nested
+        // object. Ragged so tabular is rejected and the record-block fallback
+        // path is exercised.
+        var rec0 = DynValue.ofObject(List.of(
+                Map.entry("slug", DynValue.ofString("a/one")),
+                Map.entry("title", DynValue.ofString("One")),
+                Map.entry("types", DynValue.ofArray(List.of(
+                        DynValue.ofString("alpha"), DynValue.ofString("beta")))),
+                Map.entry("meta", DynValue.ofObject(List.of(
+                        Map.entry("author", DynValue.ofString("Ann")),
+                        Map.entry("rev", DynValue.ofInteger(1)))))
+        ));
+        var rec1 = DynValue.ofObject(List.of(
+                Map.entry("slug", DynValue.ofString("b/two")),
+                Map.entry("types", DynValue.ofArray(List.of(DynValue.ofString("gamma")))),
+                Map.entry("meta", DynValue.ofObject(List.of(
+                        Map.entry("author", DynValue.ofString("Bob")))))
+        ));
+        var doc = DynValue.ofObject(List.of(Map.entry("entries",
+                DynValue.ofArray(List.of(rec0, rec1)))));
+        String odin = OdinFormatter.format(doc, null);
+        // Sanity: all string leaf values present in serialized text
+        for (String needle : new String[]{
+                "\"a/one\"", "\"One\"", "\"alpha\"", "\"beta\"", "\"Ann\"",
+                "\"b/two\"", "\"gamma\"", "\"Bob\""}) {
+            assertTrue(odin.contains(needle), "missing " + needle + " in:\n" + odin);
+        }
+        // Full round-trip: parse and JSON-export, verify same leaves survive
+        var parsed = foundation.odin.Odin.parse(odin);
+        String roundtrip = foundation.odin.Odin.serialize(parsed);
+        for (String needle : new String[]{
+                "\"a/one\"", "\"One\"", "\"alpha\"", "\"beta\"", "\"Ann\"",
+                "\"b/two\"", "\"gamma\"", "\"Bob\""}) {
+            assertTrue(roundtrip.contains(needle), "round-trip missing " + needle + " in:\n" + roundtrip);
+        }
+    }
 }

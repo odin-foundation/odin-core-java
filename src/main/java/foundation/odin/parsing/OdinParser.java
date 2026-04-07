@@ -225,7 +225,13 @@ public final class OdinParser {
             return false;
         } else if (headerValue.contains("[] :")) {
             state.currentHeader = null;
-            parseTabularSection(state, headerValue, assignments);
+            // Resolve relative tabular headers (`.subarr[] : ~`) against the last
+            // absolute header so rows assign under the parent record, not root.
+            String resolved = headerValue;
+            if (resolved.startsWith(".") && state.lastAbsoluteHeader != null) {
+                resolved = state.lastAbsoluteHeader + headerValue;
+            }
+            parseTabularSection(state, resolved, assignments);
             return false;
         } else if (headerValue.startsWith(".")) {
             // Relative header — append to last absolute header

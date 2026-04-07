@@ -188,10 +188,15 @@ public final class OdinFormatter {
             return;
         }
 
-        sb.append('{').append(name).append("[]}\n");
+        // Fallback: one absolute record block per item, with nested arrays/objects as sub-blocks.
+        String fullName;
+        if (parentSection == null || parentSection.isEmpty()) fullName = name;
+        else fullName = parentSection + "." + name;
         for (int i = 0; i < items.size(); i++) {
-            if (i > 0) sb.append("{---}\n");
-            writeFieldsSimple(sb, items.get(i));
+            if (i > 0) sb.append('\n');
+            String itemHeader = fullName + "[" + i + "]";
+            sb.append('{').append(itemHeader).append("}\n");
+            writeFieldsSimple(sb, items.get(i), itemHeader);
         }
     }
 
@@ -208,7 +213,26 @@ public final class OdinFormatter {
                 if (columnSet.add(col)) allColumns.add(col);
             }
         }
-        return allColumns.isEmpty() ? null : allColumns;
+        if (allColumns.isEmpty()) return null;
+
+        // Reject tabular if any indexed sub-array column (`key[N]`) is sparse —
+        // padding shorter rows with empty cells loses to the nested record-block form.
+        for (var col : allColumns) {
+            if (col.isEmpty() || col.charAt(col.length() - 1) != ']') continue;
+            int open = col.lastIndexOf('[');
+            if (open <= 0) continue;
+            boolean allDigits = true;
+            for (int i = open + 1; i < col.length() - 1; i++) {
+                char c = col.charAt(i);
+                if (c < '0' || c > '9') { allDigits = false; break; }
+            }
+            if (!allDigits) continue;
+            for (var item : items) {
+                var obj = item.asObject();
+                if (obj == null || findField(obj, col) == null) return null;
+            }
+        }
+        return allColumns;
     }
 
     private static boolean collectFlatColumns(List<Map.Entry<String, DynValue>> obj, String prefix, List<String> columns) {
@@ -221,7 +245,17 @@ public final class OdinFormatter {
                 if (!prefix.isEmpty()) return false; // No multi-level nesting in tabular
                 if (!collectFlatColumns(nested, entry.getKey(), columns)) return false;
             } else if (val.getType() == DynValue.Type.Array) {
-                return false;
+                // Only accept single-level primitive sub-arrays at top level.
+                if (!prefix.isEmpty()) return false;
+                var arr = val.asArray();
+                if (arr == null) return false;
+                for (var el : arr) {
+                    var t = el.getType();
+                    if (t == DynValue.Type.Object || t == DynValue.Type.Array) return false;
+                }
+                for (int i = 0; i < arr.size(); i++) {
+                    columns.add(entry.getKey() + "[" + i + "]");
+                }
             } else {
                 columns.add(colName);
             }
@@ -262,6 +296,22 @@ public final class OdinFormatter {
                 if (entry.getKey().equals(parent) && entry.getValue().getType() == DynValue.Type.Object) {
                     var nested = entry.getValue().asObject();
                     if (nested != null) return findField(nested, child);
+                }
+            }
+            return null;
+        }
+        // Support `key[N]` sub-array indexing
+        int bracketIdx = key.indexOf('[');
+        if (bracketIdx > 0 && key.endsWith("]")) {
+            String base = key.substring(0, bracketIdx);
+            String idxStr = key.substring(bracketIdx + 1, key.length() - 1);
+            int idx;
+            try { idx = Integer.parseInt(idxStr); } catch (NumberFormatException e) { return null; }
+            for (var entry : obj) {
+                if (entry.getKey().equals(base) && entry.getValue().getType() == DynValue.Type.Array) {
+                    var arr = entry.getValue().asArray();
+                    if (arr != null && idx >= 0 && idx < arr.size()) return arr.get(idx);
+                    return null;
                 }
             }
             return null;
@@ -326,10 +376,40 @@ public final class OdinFormatter {
     }
 
     private static void writeFieldsSimple(StringBuilder sb, DynValue value) {
+        writeFieldsSimple(sb, value, null);
+    }
+
+    /**
+     * Emit an object's fields under an already-opened header. Nested arrays and
+     * objects become sub-blocks rooted at {@code parentHeader} when non-null.
+     */
+    private static void writeFieldsSimple(StringBuilder sb, DynValue value, String parentHeader) {
         var entries = value.asObject();
         if (entries == null) return;
+        // Pass 1: scalar assignments
         for (var entry : entries) {
-            sb.append(entry.getKey()).append(" = ").append(valueToOdinString(entry.getValue())).append('\n');
+            var v = entry.getValue();
+            var t = v.getType();
+            if (t == DynValue.Type.Object || t == DynValue.Type.Array) continue;
+            sb.append(entry.getKey()).append(" = ").append(valueToOdinString(v)).append('\n');
+        }
+        // Pass 2: nested arrays as relative primitive/tabular sub-blocks
+        for (var entry : entries) {
+            var v = entry.getValue();
+            if (v.getType() != DynValue.Type.Array) continue;
+            var arr = v.asArray();
+            if (arr == null) continue;
+            // Use the absolute path so the parser places values under the right record.
+            String absName = parentHeader != null ? parentHeader + "." + entry.getKey() : entry.getKey();
+            writeArraySection(sb, absName, null, arr, null);
+        }
+        // Pass 3: nested objects as relative sub-sections
+        for (var entry : entries) {
+            var v = entry.getValue();
+            if (v.getType() != DynValue.Type.Object) continue;
+            String childHeader = (parentHeader != null ? parentHeader + "." : "") + entry.getKey();
+            sb.append('{').append(childHeader).append("}\n");
+            writeFieldsSimple(sb, v, childHeader);
         }
     }
 
