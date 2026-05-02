@@ -879,10 +879,11 @@ class NumericVerbExtendedTest {
         DynValue result = invoke("random", I(100));
         Double d = result.asDouble();
         Long i = result.asInt64();
+        // random(N) returns int in [0, N] inclusive — match implementation in NumericVerbs.
         if (d != null)
-            assertTrue(d >= 0.0 && d < 100.0, "random=" + d);
+            assertTrue(d >= 0.0 && d <= 100.0, "random=" + d);
         else if (i != null)
-            assertTrue(i >= 0 && i < 100, "random=" + i);
+            assertTrue(i >= 0 && i <= 100, "random=" + i);
         else
             fail("Expected numeric result");
     }
