@@ -219,7 +219,7 @@ class SchemaParserExtendedTest {
             var schema = new OdinSchema.SchemaDefinition(null, java.util.List.of(),
                 java.util.Map.of(),
                 java.util.Map.of("name", new OdinSchema.SchemaField("name",
-                    new OdinSchema.SchemaFieldType.StringType(), true, false, false, null,
+                    new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null,
                     java.util.List.of(), null, java.util.List.of())),
                 java.util.Map.of(), java.util.Map.of());
             var doc = new OdinDocumentBuilder().set("name", "Alice").build();
@@ -230,7 +230,7 @@ class SchemaParserExtendedTest {
             var schema = new OdinSchema.SchemaDefinition(null, java.util.List.of(),
                 java.util.Map.of(),
                 java.util.Map.of("name", new OdinSchema.SchemaField("name",
-                    new OdinSchema.SchemaFieldType.StringType(), true, false, false, null,
+                    new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null,
                     java.util.List.of(), null, java.util.List.of())),
                 java.util.Map.of(), java.util.Map.of());
             var doc = OdinDocument.empty();
@@ -241,7 +241,7 @@ class SchemaParserExtendedTest {
             var schema = new OdinSchema.SchemaDefinition(null, java.util.List.of(),
                 java.util.Map.of(),
                 java.util.Map.of("age", new OdinSchema.SchemaField("age",
-                    new OdinSchema.SchemaFieldType.IntegerType(), false, false, false, null,
+                    new OdinSchema.SchemaFieldType.IntegerType(), false, false, false, false, null,
                     java.util.List.of(new OdinSchema.SchemaConstraint.Bounds("0", "150", false, false)),
                     null, java.util.List.of())),
                 java.util.Map.of(), java.util.Map.of());
@@ -285,7 +285,7 @@ class SchemaParserExtendedTest {
         @Test void schemaFieldWithAllAttributes() {
             var field = new OdinSchema.SchemaField("ssn",
                 new OdinSchema.SchemaFieldType.StringType(),
-                true, true, false, "Social Security Number",
+                true, true, false, false, "Social Security Number",
                 java.util.List.of(new OdinSchema.SchemaConstraint.Pattern("^\\d{3}-\\d{2}-\\d{4}$")),
                 null, java.util.List.of());
             assertTrue(field.required());

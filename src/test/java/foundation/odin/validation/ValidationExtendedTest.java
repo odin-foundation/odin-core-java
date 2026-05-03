@@ -17,7 +17,7 @@ class ValidationExtendedTest {
     }
 
     private OdinSchema.SchemaDefinition schemaWithField(String name, OdinSchema.SchemaFieldType type, boolean required) {
-        var field = new OdinSchema.SchemaField(name, type, required, false, false, null, List.of(), null, List.of());
+        var field = new OdinSchema.SchemaField(name, type, required, false, false, false, null, List.of(), null, List.of());
         return new OdinSchema.SchemaDefinition(null, List.of(), Map.of(), Map.of(name, field), Map.of(), Map.of());
     }
 
@@ -30,8 +30,8 @@ class ValidationExtendedTest {
     @Nested class MultipleRequiredFieldTests {
         @Test void allRequiredPresent() {
             var fields = Map.of(
-                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "age", new OdinSchema.SchemaField("age", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, null, List.of(), null, List.of())
+                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "age", new OdinSchema.SchemaField("age", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, false, null, List.of(), null, List.of())
             );
             var schema = schemaWithFields(fields);
             var doc = new OdinDocumentBuilder().set("name", "Alice").set("age", 30L).build();
@@ -40,8 +40,8 @@ class ValidationExtendedTest {
 
         @Test void oneRequiredMissing() {
             var fields = Map.of(
-                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "age", new OdinSchema.SchemaField("age", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, null, List.of(), null, List.of())
+                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "age", new OdinSchema.SchemaField("age", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, false, null, List.of(), null, List.of())
             );
             var schema = schemaWithFields(fields);
             var doc = new OdinDocumentBuilder().set("name", "Alice").build();
@@ -50,8 +50,8 @@ class ValidationExtendedTest {
 
         @Test void allRequiredMissing() {
             var fields = Map.of(
-                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "age", new OdinSchema.SchemaField("age", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, null, List.of(), null, List.of())
+                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "age", new OdinSchema.SchemaField("age", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, false, null, List.of(), null, List.of())
             );
             var schema = schemaWithFields(fields);
             var doc = OdinDocument.empty();
@@ -62,7 +62,7 @@ class ValidationExtendedTest {
 
         @Test void requiredAndOptionalMix() {
             var fields = Map.of(
-                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
+                "name", new OdinSchema.SchemaField("name", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
                 "nickname", new OdinSchema.SchemaField("nickname", new OdinSchema.SchemaFieldType.StringType())
             );
             var schema = schemaWithFields(fields);
@@ -174,7 +174,7 @@ class ValidationExtendedTest {
     @Nested class ConstraintValidationExtendedTests {
         @Test void boundsWithinRange() {
             var field = new OdinSchema.SchemaField("score", new OdinSchema.SchemaFieldType.IntegerType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Bounds("0", "100", false, false)),
                 null, List.of());
             var schema = schemaWithFields(Map.of("score", field));
@@ -184,7 +184,7 @@ class ValidationExtendedTest {
 
         @Test void boundsAtMinimum() {
             var field = new OdinSchema.SchemaField("score", new OdinSchema.SchemaFieldType.IntegerType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Bounds("0", "100", false, false)),
                 null, List.of());
             var schema = schemaWithFields(Map.of("score", field));
@@ -194,7 +194,7 @@ class ValidationExtendedTest {
 
         @Test void boundsAtMaximum() {
             var field = new OdinSchema.SchemaField("score", new OdinSchema.SchemaFieldType.IntegerType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Bounds("0", "100", false, false)),
                 null, List.of());
             var schema = schemaWithFields(Map.of("score", field));
@@ -204,7 +204,7 @@ class ValidationExtendedTest {
 
         @Test void boundsBelowMinimum() {
             var field = new OdinSchema.SchemaField("score", new OdinSchema.SchemaFieldType.IntegerType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Bounds("0", "100", false, false)),
                 null, List.of());
             var schema = schemaWithFields(Map.of("score", field));
@@ -214,7 +214,7 @@ class ValidationExtendedTest {
 
         @Test void boundsExclusiveMinimum() {
             var field = new OdinSchema.SchemaField("temp", new OdinSchema.SchemaFieldType.NumberType(null),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Bounds("0", "100", true, false)),
                 null, List.of());
             var schema = schemaWithFields(Map.of("temp", field));
@@ -224,7 +224,7 @@ class ValidationExtendedTest {
 
         @Test void boundsExclusiveMaximum() {
             var field = new OdinSchema.SchemaField("temp", new OdinSchema.SchemaFieldType.NumberType(null),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Bounds("0", "100", false, true)),
                 null, List.of());
             var schema = schemaWithFields(Map.of("temp", field));
@@ -234,7 +234,7 @@ class ValidationExtendedTest {
 
         @Test void patternConstraintValid() {
             var field = new OdinSchema.SchemaField("code", new OdinSchema.SchemaFieldType.StringType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Pattern("^[A-Z]{3}$")),
                 null, List.of());
             var schema = schemaWithFields(Map.of("code", field));
@@ -244,7 +244,7 @@ class ValidationExtendedTest {
 
         @Test void patternConstraintInvalid() {
             var field = new OdinSchema.SchemaField("code", new OdinSchema.SchemaFieldType.StringType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Pattern("^[A-Z]{3}$")),
                 null, List.of());
             var schema = schemaWithFields(Map.of("code", field));
@@ -254,7 +254,7 @@ class ValidationExtendedTest {
 
         @Test void enumConstraintValid() {
             var field = new OdinSchema.SchemaField("status", new OdinSchema.SchemaFieldType.StringType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Enum(List.of("active", "inactive", "pending"))),
                 null, List.of());
             var schema = schemaWithFields(Map.of("status", field));
@@ -264,7 +264,7 @@ class ValidationExtendedTest {
 
         @Test void enumConstraintInvalid() {
             var field = new OdinSchema.SchemaField("status", new OdinSchema.SchemaFieldType.StringType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Enum(List.of("active", "inactive"))),
                 null, List.of());
             var schema = schemaWithFields(Map.of("status", field));
@@ -274,7 +274,7 @@ class ValidationExtendedTest {
 
         @Test void formatConstraintEmail() {
             var field = new OdinSchema.SchemaField("email", new OdinSchema.SchemaFieldType.StringType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Format("email")),
                 null, List.of());
             var schema = schemaWithFields(Map.of("email", field));
@@ -284,7 +284,7 @@ class ValidationExtendedTest {
 
         @Test void formatConstraintInvalidEmail() {
             var field = new OdinSchema.SchemaField("email", new OdinSchema.SchemaFieldType.StringType(),
-                false, false, false, null,
+                false, false, false, false, null,
                 List.of(new OdinSchema.SchemaConstraint.Format("email")),
                 null, List.of());
             var schema = schemaWithFields(Map.of("email", field));
@@ -294,7 +294,7 @@ class ValidationExtendedTest {
 
         @Test void multipleConstraints() {
             var field = new OdinSchema.SchemaField("code", new OdinSchema.SchemaFieldType.StringType(),
-                true, false, false, null,
+                true, false, false, false, null,
                 List.of(
                     new OdinSchema.SchemaConstraint.Pattern("^[A-Z]+$"),
                     new OdinSchema.SchemaConstraint.Enum(List.of("ABC", "DEF", "GHI"))
@@ -379,9 +379,9 @@ class ValidationExtendedTest {
     @Nested class FailFastTests {
         @Test void failFastStopsAtFirstError() {
             var fields = Map.of(
-                "a", new OdinSchema.SchemaField("a", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "b", new OdinSchema.SchemaField("b", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "c", new OdinSchema.SchemaField("c", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of())
+                "a", new OdinSchema.SchemaField("a", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "b", new OdinSchema.SchemaField("b", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "c", new OdinSchema.SchemaField("c", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of())
             );
             var schema = schemaWithFields(fields);
             var doc = OdinDocument.empty();
@@ -393,9 +393,9 @@ class ValidationExtendedTest {
 
         @Test void nonFailFastCollectsAllErrors() {
             var fields = Map.of(
-                "a", new OdinSchema.SchemaField("a", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "b", new OdinSchema.SchemaField("b", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "c", new OdinSchema.SchemaField("c", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of())
+                "a", new OdinSchema.SchemaField("a", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "b", new OdinSchema.SchemaField("b", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "c", new OdinSchema.SchemaField("c", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of())
             );
             var schema = schemaWithFields(fields);
             var doc = OdinDocument.empty();

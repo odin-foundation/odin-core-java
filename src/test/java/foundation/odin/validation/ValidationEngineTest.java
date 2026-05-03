@@ -18,7 +18,7 @@ class ValidationEngineTest {
 
     private OdinSchema.SchemaDefinition simpleSchema(String fieldName, OdinSchema.SchemaFieldType fieldType, boolean required) {
         var field = required
-            ? new OdinSchema.SchemaField(fieldName, fieldType, true, false, false, null, List.of(), null, List.of())
+            ? new OdinSchema.SchemaField(fieldName, fieldType, true, false, false, false, null, List.of(), null, List.of())
             : new OdinSchema.SchemaField(fieldName, fieldType);
         return new OdinSchema.SchemaDefinition(null, List.of(),
             Map.of(), Map.of(fieldName, field), Map.of(), Map.of());
@@ -26,7 +26,7 @@ class ValidationEngineTest {
 
     private OdinSchema.SchemaDefinition schemaWithConstraints(String fieldName, OdinSchema.SchemaFieldType fieldType,
             List<OdinSchema.SchemaConstraint> constraints) {
-        var field = new OdinSchema.SchemaField(fieldName, fieldType, false, false, false, null, constraints, null, List.of());
+        var field = new OdinSchema.SchemaField(fieldName, fieldType, false, false, false, false, null, constraints, null, List.of());
         return new OdinSchema.SchemaDefinition(null, List.of(),
             Map.of(), Map.of(fieldName, field), Map.of(), Map.of());
     }

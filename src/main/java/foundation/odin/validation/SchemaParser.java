@@ -261,6 +261,7 @@ public final class SchemaParser {
         boolean required = false;
         boolean confidential = false;
         boolean deprecated = false;
+        boolean immutable = false;
         OdinSchema.SchemaFieldType fieldType = new OdinSchema.SchemaFieldType.StringType();
         var constraints = new ArrayList<OdinSchema.SchemaConstraint>();
         var conditionals = new ArrayList<OdinSchema.SchemaConditional>();
@@ -383,6 +384,9 @@ public final class SchemaParser {
             } else if (s.startsWith(":deprecated")) {
                 deprecated = true;
                 s = s.substring(11).trim();
+            } else if (s.startsWith(":immutable")) {
+                immutable = true;
+                s = s.substring(10).trim();
             } else if (s.startsWith(":unique")) {
                 constraints.add(new OdinSchema.SchemaConstraint.Unique());
                 s = s.substring(7).trim();
@@ -445,7 +449,7 @@ public final class SchemaParser {
         }
 
         return new OdinSchema.SchemaField(name, fieldType, required, confidential, deprecated,
-                null, constraints, null, conditionals);
+                immutable, null, constraints, null, conditionals);
     }
 
     private static void parseConditional(String condStr,

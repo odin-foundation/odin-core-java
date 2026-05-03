@@ -288,14 +288,14 @@ public final class SchemaFlattener {
             return new OdinSchema.SchemaField(
                     updated.name(),
                     new OdinSchema.SchemaFieldType.ReferenceType(rewriteTypeReference(ref.target())),
-                    updated.required(), updated.confidential(), updated.deprecated(),
+                    updated.required(), updated.confidential(), updated.deprecated(), updated.immutable(),
                     updated.description(), updated.constraints(), updated.defaultValue(), updated.conditionals()
             );
         } else if (fieldType instanceof OdinSchema.SchemaFieldType.TypeRefType typeRef) {
             return new OdinSchema.SchemaField(
                     updated.name(),
                     new OdinSchema.SchemaFieldType.TypeRefType(rewriteTypeReference(typeRef.name())),
-                    updated.required(), updated.confidential(), updated.deprecated(),
+                    updated.required(), updated.confidential(), updated.deprecated(), updated.immutable(),
                     updated.description(), updated.constraints(), updated.defaultValue(), updated.conditionals()
             );
         }
@@ -644,6 +644,7 @@ public final class SchemaFlattener {
                 source.required(),
                 source.confidential(),
                 source.deprecated(),
+                source.immutable(),
                 source.description(),
                 source.constraints() != null ? new ArrayList<>(source.constraints()) : List.of(),
                 source.defaultValue(),

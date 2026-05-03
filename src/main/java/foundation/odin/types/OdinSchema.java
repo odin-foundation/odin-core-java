@@ -42,13 +42,14 @@ public final class OdinSchema {
             boolean required,
             boolean confidential,
             boolean deprecated,
+            boolean immutable,
             String description,
             List<SchemaConstraint> constraints,
             String defaultValue,
             List<SchemaConditional> conditionals
     ) {
         public SchemaField(String name, SchemaFieldType fieldType) {
-            this(name, fieldType, false, false, false, null, List.of(), null, List.of());
+            this(name, fieldType, false, false, false, false, null, List.of(), null, List.of());
         }
     }
 

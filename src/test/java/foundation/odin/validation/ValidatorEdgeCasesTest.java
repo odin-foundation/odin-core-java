@@ -68,7 +68,7 @@ class ValidatorEdgeCasesTest {
         @Test void emptyDocFailsWithRequiredField() {
             var schema = new OdinSchema.SchemaDefinition(null, List.of(), Map.of(),
                 Map.of("required", new OdinSchema.SchemaField("required",
-                    new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of())),
+                    new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of())),
                 Map.of(), Map.of());
             var doc = OdinDocument.empty();
             assertFalse(validate(doc, schema).valid());
@@ -76,9 +76,9 @@ class ValidatorEdgeCasesTest {
 
         @Test void emptyDocMultipleRequiredFieldsFail() {
             var fields = Map.of(
-                "a", new OdinSchema.SchemaField("a", new OdinSchema.SchemaFieldType.StringType(), true, false, false, null, List.of(), null, List.of()),
-                "b", new OdinSchema.SchemaField("b", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, null, List.of(), null, List.of()),
-                "c", new OdinSchema.SchemaField("c", new OdinSchema.SchemaFieldType.BooleanType(), true, false, false, null, List.of(), null, List.of())
+                "a", new OdinSchema.SchemaField("a", new OdinSchema.SchemaFieldType.StringType(), true, false, false, false, null, List.of(), null, List.of()),
+                "b", new OdinSchema.SchemaField("b", new OdinSchema.SchemaFieldType.IntegerType(), true, false, false, false, null, List.of(), null, List.of()),
+                "c", new OdinSchema.SchemaField("c", new OdinSchema.SchemaFieldType.BooleanType(), true, false, false, false, null, List.of(), null, List.of())
             );
             var schema = new OdinSchema.SchemaDefinition(null, List.of(), Map.of(), fields, Map.of(), Map.of());
             var doc = OdinDocument.empty();
