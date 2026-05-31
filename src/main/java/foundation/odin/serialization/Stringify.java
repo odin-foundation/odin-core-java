@@ -102,8 +102,8 @@ public final class Stringify {
 
     static void writeModifiers(StringBuilder sb, OdinModifiers mods) {
         if (mods.isRequired()) sb.append('!');
-        if (mods.isConfidential()) sb.append('*');
         if (mods.isDeprecated()) sb.append('-');
+        if (mods.isConfidential()) sb.append('*');
     }
 
     static void writeValue(StringBuilder sb, OdinValue value) {

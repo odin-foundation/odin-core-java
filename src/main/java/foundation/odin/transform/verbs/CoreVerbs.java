@@ -130,6 +130,9 @@ public final class CoreVerbs {
         if (table != null && table.getDefault() != null)
             return table.getDefault();
 
+        var matchKey = Arrays.stream(keys).map(CoreVerbs::coerceKeyStr)
+                .map(k -> k == null ? "" : k).reduce((a, b) -> a + ", " + b).orElse("");
+        ctx.reportMissing(tableName, matchKey);
         return DynValue.ofNull();
     }
 

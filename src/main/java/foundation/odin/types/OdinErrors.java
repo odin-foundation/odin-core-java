@@ -316,6 +316,19 @@ public final class OdinErrors {
         private TransformErrorCodes() {}
     }
 
+    // Lookup key not found in a table (T004).
+    public static OdinTransformTypes.TransformError lookupKeyNotFoundError(String tableName, String key) {
+        var error = new OdinTransformTypes.TransformError(
+                "Lookup key '" + key + "' not found in table '" + tableName + "'");
+        error.setCode(TransformErrorCodes.T004_LOOKUP_KEY_NOT_FOUND);
+        return error;
+    }
+
+    public static OdinTransformTypes.TransformWarning lookupKeyNotFoundWarning(String tableName, String key) {
+        return new OdinTransformTypes.TransformWarning(
+                "Lookup key '" + key + "' not found in table '" + tableName + "'");
+    }
+
     // Conditional branch (elif/else) with no preceding if.
     public static OdinTransformTypes.TransformError danglingBranchError(String directive, String segment) {
         var error = new OdinTransformTypes.TransformError(

@@ -42,6 +42,8 @@ public final class ValidationEngine {
 
             // Required check (V001)
             if (schemaField.required() && docValue == null) {
+                // Computed fields are produced downstream, not supplied as input
+                if (schemaField.computed()) continue;
                 // Check if this is an array element field pattern (e.g., items.name in {items[]} section)
                 // If the field is inside an array, don't flag as missing — array validation handles it
                 boolean isArrayField = false;
@@ -67,6 +69,20 @@ public final class ValidationEngine {
                         "Type mismatch at " + path + ": expected " + schemaField.fieldType() + ", got " + docValue.getType()));
                 if (opts.isFailFast()) return new OdinSchema.ValidationResult(false, errors);
                 continue;
+            }
+
+            // Decimal precision: #.N enforces exactly N places (V003)
+            if (schemaField.fieldType() instanceof OdinSchema.SchemaFieldType.NumberType nt
+                    && nt.decimalPlaces() != null && docValue instanceof OdinValue.OdinNumber num) {
+                String raw = num.getRaw() != null ? num.getRaw() : String.valueOf(num.getValue());
+                int dot = raw.indexOf('.');
+                int actualPlaces = dot < 0 ? 0 : raw.length() - dot - 1;
+                if (actualPlaces != (nt.decimalPlaces() & 0xFF)) {
+                    errors.add(new OdinSchema.ValidationError(path, "V003",
+                            "Decimal places mismatch at " + path + ": expected exactly " + (nt.decimalPlaces() & 0xFF)));
+                    if (opts.isFailFast()) return new OdinSchema.ValidationResult(false, errors);
+                    continue;
+                }
             }
 
             // Constraint validation
@@ -188,6 +204,28 @@ public final class ValidationEngine {
         // Temporal bounds: compare chronologically against ISO literals.
         if (value instanceof OdinValue.OdinDate || value instanceof OdinValue.OdinTimestamp) {
             return validateTemporalBounds(value, bounds, path);
+        }
+
+        // Byte-length bounds for binary values.
+        if (value instanceof OdinValue.OdinBinary bin) {
+            int len = bin.getData().length;
+            if (bounds.min() != null) {
+                try {
+                    if (len < Long.parseLong(bounds.min())) {
+                        return new OdinSchema.ValidationError(path, "V003",
+                                "Binary size out of bounds at " + path + ": " + len + " < " + bounds.min());
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+            if (bounds.max() != null) {
+                try {
+                    if (len > Long.parseLong(bounds.max())) {
+                        return new OdinSchema.ValidationError(path, "V003",
+                                "Binary size out of bounds at " + path + ": " + len + " > " + bounds.max());
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+            return null;
         }
 
         Double numValue = null;

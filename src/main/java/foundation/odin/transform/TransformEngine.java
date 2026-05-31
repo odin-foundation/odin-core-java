@@ -43,12 +43,25 @@ public final class TransformEngine {
         private Map<String, DynValue> accumulators = new LinkedHashMap<>();
         private Map<String, LookupTable> tables = new LinkedHashMap<>();
         private DynValue globalOutput = DynValue.ofNull();
+        private String onMissing;
+        private List<TransformError> errors;
+        private List<TransformWarning> warnings;
 
         public DynValue getSource() { return source; }
         public Map<String, DynValue> getLoopVars() { return loopVars; }
         public Map<String, DynValue> getAccumulators() { return accumulators; }
         public Map<String, LookupTable> getTables() { return tables; }
         public DynValue getGlobalOutput() { return globalOutput; }
+        public String getOnMissing() { return onMissing; }
+
+        // Report a lookup miss honoring the onMissing policy (default silent null).
+        public void reportMissing(String tableName, String key) {
+            if ("fail".equals(onMissing)) {
+                if (errors != null) errors.add(OdinErrors.lookupKeyNotFoundError(tableName, key));
+            } else if ("warn".equals(onMissing)) {
+                if (warnings != null) warnings.add(OdinErrors.lookupKeyNotFoundWarning(tableName, key));
+            }
+        }
     }
 
     // ── ExecContext ──
@@ -68,6 +81,7 @@ public final class TransformEngine {
         String sourceFormat;
         String onValidation;
         String onError;
+        String onMissing;
     }
 
     // ── Public Entry Point ──
@@ -398,6 +412,7 @@ public final class TransformEngine {
         var targetOpts = transform.getTarget() != null ? transform.getTarget().getOptions() : null;
         ctx.onValidation = targetOpts != null ? targetOpts.get("onValidation") : null;
         ctx.onError = targetOpts != null ? targetOpts.get("onError") : null;
+        ctx.onMissing = targetOpts != null ? targetOpts.get("onMissing") : null;
         return ctx;
     }
 
@@ -638,6 +653,10 @@ public final class TransformEngine {
                 if (evaluateFieldCondition(unlessDir.getValue().asString(), ctx, currentSource)) return output;
             }
 
+            // A :default modifier handles a missing lookup; suppress errors raised during evaluation.
+            boolean hasDefault = findMappingDirective(mapping, "default") != null;
+            int errorsBefore = hasDefault ? ctx.errors.size() : 0;
+
             DynValue value;
             // :object builds a nested object from an inline {key = @path, ...} spec.
             var objectDir = findMappingDirective(mapping, "object");
@@ -645,6 +664,11 @@ public final class TransformEngine {
                 value = buildInlineObject(objectDir.getValue().asString(), ctx, currentSource, output);
             } else {
                 value = evaluateExpression(mapping.getExpression(), ctx, currentSource, output);
+            }
+
+            // If a :default rescued a null result, drop errors raised during evaluation.
+            if (hasDefault && ctx.errors.size() > errorsBefore) {
+                while (ctx.errors.size() > errorsBefore) ctx.errors.remove(ctx.errors.size() - 1);
             }
 
             // Apply mapping directives (type coercion, extraction)
@@ -972,6 +996,9 @@ public final class TransformEngine {
         verbCtx.accumulators = ctx.accumulators;
         verbCtx.tables = ctx.tables;
         verbCtx.globalOutput = ctx.globalOutput;
+        verbCtx.onMissing = ctx.onMissing;
+        verbCtx.errors = ctx.errors;
+        verbCtx.warnings = ctx.warnings;
 
         var result = verbFn.apply(evaluatedArgs, verbCtx);
 

@@ -150,8 +150,8 @@ class StringifyTest {
 
         @Test void modifierOrder() {
             var result = roundTrip("field = !*-\"value\"");
-            // canonical order: ! * -
-            assertTrue(result.contains("!*-\"value\""));
+            // canonical order: ! - *
+            assertTrue(result.contains("!-*\"value\""));
         }
     }
 

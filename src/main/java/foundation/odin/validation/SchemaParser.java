@@ -555,9 +555,29 @@ public final class SchemaParser {
         if (s.startsWith("##")) return new TypeParse(new OdinSchema.SchemaFieldType.IntegerType(), s.substring(2));
         if (s.startsWith("#%")) return new TypeParse(new OdinSchema.SchemaFieldType.PercentType(), s.substring(2));
         if (s.startsWith("#$")) return new TypeParse(new OdinSchema.SchemaFieldType.CurrencyType(null), s.substring(2));
-        if (s.startsWith("#")) return new TypeParse(new OdinSchema.SchemaFieldType.NumberType(null), s.substring(1));
+        if (s.startsWith("#")) {
+            // Decimal precision: #.N enforces exactly N places
+            String rest = s.substring(1);
+            if (rest.startsWith(".") && rest.length() > 1 && Character.isDigit(rest.charAt(1))) {
+                int i = 1;
+                while (i < rest.length() && Character.isDigit(rest.charAt(i))) i++;
+                Byte places = (byte) Integer.parseInt(rest.substring(1, i));
+                return new TypeParse(new OdinSchema.SchemaFieldType.NumberType(places), rest.substring(i));
+            }
+            return new TypeParse(new OdinSchema.SchemaFieldType.NumberType(null), rest);
+        }
         if (s.startsWith("?")) return new TypeParse(new OdinSchema.SchemaFieldType.BooleanType(), s.substring(1));
-        if (s.startsWith("^")) return new TypeParse(new OdinSchema.SchemaFieldType.BinaryType(), s.substring(1));
+        if (s.startsWith("^")) {
+            // Binary with optional algorithm tag: ^algo:(N) — consume the tag, leave :(N) bounds
+            String rest = s.substring(1);
+            int i = 0;
+            while (i < rest.length()
+                    && (Character.isLetterOrDigit(rest.charAt(i)) || rest.charAt(i) == '-')) i++;
+            if (i > 0 && i < rest.length() && rest.charAt(i) == ':') {
+                return new TypeParse(new OdinSchema.SchemaFieldType.BinaryType(), rest.substring(i));
+            }
+            return new TypeParse(new OdinSchema.SchemaFieldType.BinaryType(), rest);
+        }
         if (s.startsWith("~")) return new TypeParse(new OdinSchema.SchemaFieldType.NullType(), s.substring(1));
         if (s.startsWith("@") && !s.startsWith("@.")) {
             // Read the reference name up to whitespace, '|', ':' or end.
@@ -633,6 +653,12 @@ public final class SchemaParser {
                 double num = Double.parseDouble(valueStr);
                 value = new OdinSchema.ConditionalValue.NumberVal(num);
             } catch (NumberFormatException e) {
+                // Strip surrounding quotes from string literals
+                if (valueStr.length() >= 2
+                        && (valueStr.charAt(0) == '"' || valueStr.charAt(0) == '\'')
+                        && valueStr.charAt(valueStr.length() - 1) == valueStr.charAt(0)) {
+                    valueStr = valueStr.substring(1, valueStr.length() - 1);
+                }
                 value = new OdinSchema.ConditionalValue.StringVal(valueStr);
             }
         }

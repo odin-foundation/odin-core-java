@@ -59,16 +59,19 @@ public final class Canonicalize {
             }
             case OdinValue.OdinInteger i -> {
                 sb.append("##");
-                sb.append(i.getValue());
+                // Prefer raw to preserve integers beyond long range
+                sb.append(i.getRaw() != null ? i.getRaw() : Long.toString(i.getValue()));
             }
             case OdinValue.OdinNumber n -> {
                 sb.append('#');
-                sb.append(formatCanonicalNumber(n.getValue()));
+                // Prefer raw to preserve precision beyond double range
+                sb.append(n.getRaw() != null
+                        ? formatCanonicalNumber(n.getRaw())
+                        : formatCanonicalNumber(n.getValue()));
             }
             case OdinValue.OdinCurrency c -> {
                 sb.append("#$");
-                int dp = Math.max(c.getDecimalPlaces(), 2);
-                sb.append(String.format("%." + dp + "f", c.getValue()));
+                sb.append(formatCanonicalCurrency(c));
                 if (c.getCurrencyCode() != null) {
                     sb.append(':');
                     sb.append(c.getCurrencyCode().toUpperCase());
@@ -105,13 +108,42 @@ public final class Canonicalize {
      * Format a number stripping trailing zeros.
      */
     static String formatCanonicalNumber(double value) {
-        String s = Double.toString(value);
+        return formatCanonicalNumber(Double.toString(value));
+    }
+
+    /**
+     * Format a number string stripping trailing zeros.
+     */
+    static String formatCanonicalNumber(String s) {
         // Strip trailing zeros after decimal point
         if (s.contains(".") && !s.contains("e") && !s.contains("E")) {
             s = s.replaceAll("0+$", "");
             if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
         }
         return s;
+    }
+
+    /**
+     * Format a currency value with at least 2 decimal places.
+     * Prefers raw to preserve precision and integer parts beyond double range.
+     */
+    static String formatCanonicalCurrency(OdinValue.OdinCurrency c) {
+        String raw = c.getRaw();
+        if (raw != null) {
+            // Raw may carry a trailing :code suffix; keep only the numeric part
+            int colon = raw.indexOf(':');
+            if (colon >= 0) raw = raw.substring(0, colon);
+            boolean negative = raw.startsWith("-");
+            String unsigned = negative ? raw.substring(1) : raw;
+            int dotIndex = unsigned.indexOf('.');
+            String intPart = dotIndex < 0 ? unsigned : unsigned.substring(0, dotIndex);
+            String fracPart = dotIndex < 0 ? "" : unsigned.substring(dotIndex + 1);
+            StringBuilder frac = new StringBuilder(fracPart);
+            while (frac.length() < 2) frac.append('0');
+            return (negative ? "-" : "") + intPart + "." + frac;
+        }
+        int dp = Math.max(c.getDecimalPlaces(), 2);
+        return String.format("%." + dp + "f", c.getValue());
     }
 
     /**
