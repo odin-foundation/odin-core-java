@@ -645,13 +645,10 @@ public final class DateTimeVerbs {
         if (dt == null) return DynValue.ofNull();
 
         LocalDate date = dt.toLocalDate();
-        DayOfWeek dow = date.getDayOfWeek();
-
-        if (dow == DayOfWeek.SATURDAY) {
-            date = date.plusDays(2);
-        } else if (dow == DayOfWeek.SUNDAY) {
+        // Advance at least one day, then skip weekends.
+        do {
             date = date.plusDays(1);
-        }
+        } while (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY);
 
         return DynValue.ofString(formatAsDate(date.atStartOfDay()));
     }
@@ -661,21 +658,65 @@ public final class DateTimeVerbs {
     private static final java.util.regex.Pattern DURATION_PATTERN =
             java.util.regex.Pattern.compile("^P(?:(\\d+)Y)?(?:(\\d+)M)?(?:(\\d+)D)?(?:T(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+(?:\\.\\d+)?)S)?)?$");
 
+    private static final java.util.regex.Pattern NUMERIC_SECONDS_PATTERN =
+            java.util.regex.Pattern.compile("^\\d+(?:\\.\\d+)?$");
+
+    private static boolean isNumeric(DynValue v) {
+        switch (v.getType()) {
+            case Integer:
+            case Float:
+            case FloatRaw:
+            case Currency:
+            case CurrencyRaw:
+            case Percent:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private static DynValue formatDuration(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
 
-        String input = args[0].asString();
-        if (input == null || input.isEmpty()) return DynValue.ofNull();
+        var arg = args[0];
 
-        var matcher = DURATION_PATTERN.matcher(input);
-        if (!matcher.matches()) return DynValue.ofNull();
+        int years = 0, months = 0, days = 0, hours = 0, minutes = 0;
+        double seconds = 0.0;
 
-        int years = matcher.group(1) != null ? Integer.parseInt(matcher.group(1)) : 0;
-        int months = matcher.group(2) != null ? Integer.parseInt(matcher.group(2)) : 0;
-        int days = matcher.group(3) != null ? Integer.parseInt(matcher.group(3)) : 0;
-        int hours = matcher.group(4) != null ? Integer.parseInt(matcher.group(4)) : 0;
-        int minutes = matcher.group(5) != null ? Integer.parseInt(matcher.group(5)) : 0;
-        double seconds = matcher.group(6) != null ? Double.parseDouble(matcher.group(6)) : 0.0;
+        if (isNumeric(arg)) {
+            // Numeric seconds: expand into days/hours/minutes/seconds.
+            Double total = VerbHelpers.coerceNum(arg);
+            if (total == null || !Double.isFinite(total) || total < 0) return DynValue.ofNull();
+            days = (int) Math.floor(total / 86400);
+            total -= days * 86400.0;
+            hours = (int) Math.floor(total / 3600);
+            total -= hours * 3600.0;
+            minutes = (int) Math.floor(total / 60);
+            seconds = total - minutes * 60.0;
+        } else {
+            String input = arg.asString();
+            if (input == null || input.isEmpty()) return DynValue.ofNull();
+
+            if (NUMERIC_SECONDS_PATTERN.matcher(input).matches()) {
+                // Numeric seconds passed as a string.
+                double total = Double.parseDouble(input);
+                days = (int) Math.floor(total / 86400);
+                total -= days * 86400.0;
+                hours = (int) Math.floor(total / 3600);
+                total -= hours * 3600.0;
+                minutes = (int) Math.floor(total / 60);
+                seconds = total - minutes * 60.0;
+            } else {
+                var matcher = DURATION_PATTERN.matcher(input);
+                if (!matcher.matches()) return DynValue.ofNull();
+                years = matcher.group(1) != null ? Integer.parseInt(matcher.group(1)) : 0;
+                months = matcher.group(2) != null ? Integer.parseInt(matcher.group(2)) : 0;
+                days = matcher.group(3) != null ? Integer.parseInt(matcher.group(3)) : 0;
+                hours = matcher.group(4) != null ? Integer.parseInt(matcher.group(4)) : 0;
+                minutes = matcher.group(5) != null ? Integer.parseInt(matcher.group(5)) : 0;
+                seconds = matcher.group(6) != null ? Double.parseDouble(matcher.group(6)) : 0.0;
+            }
+        }
 
         var parts = new ArrayList<String>();
         if (years > 0) parts.add(years + " " + (years == 1 ? "year" : "years"));

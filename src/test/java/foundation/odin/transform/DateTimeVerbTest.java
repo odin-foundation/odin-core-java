@@ -951,4 +951,81 @@ class DateTimeVerbTest {
     void ageFromDate_NullInput() {
         assertTrue(invoke("ageFromDate", Null()).isNull());
     }
+
+    // =========================================================================
+    // nextBusinessDay
+    // =========================================================================
+
+    @Test
+    void nextBusinessDay_Wednesday() {
+        // 2024-01-17 is a Wednesday → Thursday
+        assertEquals("2024-01-18", invoke("nextBusinessDay", D("2024-01-17")).asString());
+    }
+
+    @Test
+    void nextBusinessDay_Friday() {
+        // 2024-01-19 is a Friday → Monday
+        assertEquals("2024-01-22", invoke("nextBusinessDay", D("2024-01-19")).asString());
+    }
+
+    @Test
+    void nextBusinessDay_Saturday() {
+        // 2024-01-20 is a Saturday → Monday
+        assertEquals("2024-01-22", invoke("nextBusinessDay", D("2024-01-20")).asString());
+    }
+
+    @Test
+    void nextBusinessDay_Sunday() {
+        // 2024-01-21 is a Sunday → Monday
+        assertEquals("2024-01-22", invoke("nextBusinessDay", D("2024-01-21")).asString());
+    }
+
+    @Test
+    void nextBusinessDay_NullInput() {
+        assertTrue(invoke("nextBusinessDay", Null()).isNull());
+    }
+
+    // =========================================================================
+    // formatDuration
+    // =========================================================================
+
+    @Test
+    void formatDuration_NumericSeconds() {
+        assertEquals("1 day, 1 hour, 1 minute, 1 second",
+                invoke("formatDuration", I(90061)).asString());
+    }
+
+    @Test
+    void formatDuration_SubDaySeconds() {
+        assertEquals("1 hour, 1 minute, 1 second",
+                invoke("formatDuration", I(3661)).asString());
+    }
+
+    @Test
+    void formatDuration_NumericSecondsAsString() {
+        assertEquals("1 day, 1 hour, 1 minute, 1 second",
+                invoke("formatDuration", S("90061")).asString());
+    }
+
+    @Test
+    void formatDuration_Iso() {
+        assertEquals("2 hours, 30 minutes",
+                invoke("formatDuration", S("PT2H30M")).asString());
+    }
+
+    @Test
+    void formatDuration_IsoDay() {
+        assertEquals("1 day, 6 hours",
+                invoke("formatDuration", S("P1DT6H")).asString());
+    }
+
+    @Test
+    void formatDuration_NegativeSecondsNull() {
+        assertTrue(invoke("formatDuration", I(-5)).isNull());
+    }
+
+    @Test
+    void formatDuration_ZeroSeconds() {
+        assertEquals("0 seconds", invoke("formatDuration", I(0)).asString());
+    }
 }
