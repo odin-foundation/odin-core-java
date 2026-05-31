@@ -255,4 +255,32 @@ class ParserDirectivesTest {
             assertEquals(42L, doc.getInteger("count"));
         }
     }
+
+    // ─── Inline header directives ({Section :type "x"} / {Section :if "expr"}) ──
+
+    @Nested class InlineHeaderDirectiveTests {
+        @Test void headerInlineType() {
+            var doc = parse("{Coverage :type \"COLLISION\"}\nlimit = ##500");
+            assertEquals("COLLISION", doc.getString("Coverage._type"));
+            assertEquals(500L, doc.getInteger("Coverage.limit"));
+        }
+
+        @Test void headerInlineIfEmitsCondition() {
+            var doc = parse("{DuiDetails :if \"@driver.has_dui = true\"}\nstate = \"TX\"");
+            assertEquals("@driver.has_dui = true", doc.getString("DuiDetails._if"));
+            assertEquals("TX", doc.getString("DuiDetails.state"));
+        }
+
+        @Test void headerInlineIfDoesNotPolluteHeaderPath() {
+            var doc = parse("{DuiDetails :if \"@driver.has_dui = true\"}\nstate = \"TX\"");
+            assertNull(doc.getString("DuiDetails :if \"@driver.has_dui = true\".state"));
+        }
+
+        @Test void tabularColonStillParsesAsColumns() {
+            var doc = parse("{rows[] : id, name}\n##1, \"Alice\"\n##2, \"Bob\"");
+            assertEquals(1L, doc.getInteger("rows[0].id"));
+            assertEquals("Alice", doc.getString("rows[0].name"));
+            assertEquals("Bob", doc.getString("rows[1].name"));
+        }
+    }
 }

@@ -223,6 +223,17 @@ public final class OdinParser {
         } else if (headerValue.charAt(0) == '@') {
             state.currentHeader = headerValue.substring(1);
             return false;
+        } else if (!headerValue.contains("[] :") && parseInlineHeaderDirective(headerValue) != null) {
+            // {Segment :type "value"} / {Segment :if "expr"} → synthetic <path>._<name>
+            var directive = parseInlineHeaderDirective(headerValue);
+            String path = directive[0];
+            if (path.startsWith(".") && state.lastAbsoluteHeader != null) {
+                path = state.lastAbsoluteHeader + path;
+            }
+            state.currentHeader = path;
+            if (!path.startsWith(".")) state.lastAbsoluteHeader = path;
+            assignments.set(path + "._" + directive[1], OdinValue.ofString(directive[2]));
+            return false;
         } else if (headerValue.contains("[] :")) {
             state.currentHeader = null;
             // Resolve relative tabular headers (`.subarr[] : ~`) against the last
@@ -246,6 +257,24 @@ public final class OdinParser {
             state.lastAbsoluteHeader = headerValue;
             return false;
         }
+    }
+
+    // Match {path :type "value"} / {path :if "value"} → [path, name, value], else null.
+    private static String[] parseInlineHeaderDirective(String headerValue) {
+        int colon = headerValue.indexOf(" :");
+        if (colon < 0) return null;
+        String path = headerValue.substring(0, colon).trim();
+        if (path.isEmpty()) return null;
+        String rest = headerValue.substring(colon + 2);
+        String name;
+        if (rest.startsWith("type")) name = "type";
+        else if (rest.startsWith("if")) name = "if";
+        else return null;
+        String afterName = rest.substring(name.length()).stripLeading();
+        if (afterName.length() < 2 || afterName.charAt(0) != '"' || afterName.charAt(afterName.length() - 1) != '"')
+            return null;
+        String value = afterName.substring(1, afterName.length() - 1);
+        return new String[] { path, name, value };
     }
 
     // ── Import, Schema, Conditional ──

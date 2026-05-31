@@ -397,8 +397,7 @@ public final class TransformEngine {
     private static DynValue processSegment(TransformSegment segment, ExecContext ctx, DynValue output, String pathPrefix) {
         // Condition check
         if (segment.getCondition() != null) {
-            var condVal = resolvePath(ctx.source, segment.getCondition(), ctx.constants, ctx.accumulators);
-            if (!isTruthy(condVal)) return output;
+            if (!evaluateCondition(segment.getCondition(), ctx)) return output;
         }
 
         // Discriminator check
@@ -1018,6 +1017,86 @@ public final class TransformEngine {
     }
 
     // ── Helpers ──
+
+    private static final java.util.regex.Pattern CONDITION_PATTERN =
+            java.util.regex.Pattern.compile("^(@?[\\w.\\[\\]]+)\\s*(==|!=|<>|<=|>=|=|<|>)\\s*(.+)$");
+
+    // Evaluate a segment condition: comparison expression or path truthiness.
+    private static boolean evaluateCondition(String condition, ExecContext ctx) {
+        var trimmed = condition.trim();
+        var matcher = CONDITION_PATTERN.matcher(trimmed);
+        if (matcher.matches()) {
+            var left = resolvePath(ctx.source, matcher.group(1), ctx.constants, ctx.accumulators);
+            return compareCondition(left, matcher.group(2), parseConditionValue(matcher.group(3).trim()));
+        }
+        return isTruthy(resolvePath(ctx.source, trimmed, ctx.constants, ctx.accumulators));
+    }
+
+    private static DynValue parseConditionValue(String raw) {
+        if (raw.length() >= 2 &&
+                ((raw.charAt(0) == '\'' && raw.charAt(raw.length() - 1) == '\'') ||
+                 (raw.charAt(0) == '"' && raw.charAt(raw.length() - 1) == '"'))) {
+            return DynValue.ofString(raw.substring(1, raw.length() - 1));
+        }
+        var lower = raw.toLowerCase();
+        if ("true".equals(lower)) return DynValue.ofBool(true);
+        if ("false".equals(lower)) return DynValue.ofBool(false);
+        if ("null".equals(lower) || "nil".equals(lower)) return DynValue.ofNull();
+        try {
+            double d = Double.parseDouble(raw);
+            return d == Math.floor(d) && !Double.isInfinite(d)
+                    ? DynValue.ofInteger((long) d) : DynValue.ofFloat(d);
+        } catch (NumberFormatException ignored) {
+            return DynValue.ofString(raw);
+        }
+    }
+
+    private static Double conditionNumber(DynValue val) {
+        if (val == null || val.isNull()) return null;
+        return switch (val.getType()) {
+            case Integer -> val.asInt64() == null ? null : val.asInt64().doubleValue();
+            case Float, Currency, Percent, FloatRaw, CurrencyRaw -> val.asDouble();
+            case String -> {
+                try { yield Double.parseDouble(val.asString()); }
+                catch (Exception e) { yield null; }
+            }
+            default -> null;
+        };
+    }
+
+    private static String conditionString(DynValue val) {
+        if (val == null || val.isNull()) return "";
+        return switch (val.getType()) {
+            case Bool -> Boolean.TRUE.equals(val.asBool()) ? "true" : "false";
+            case Integer -> val.asInt64() == null ? "" : Long.toString(val.asInt64());
+            case Float, Currency, Percent, FloatRaw, CurrencyRaw -> {
+                var d = val.asDouble();
+                if (d == null) yield "";
+                yield d == Math.floor(d) && !Double.isInfinite(d) ? Long.toString((long) (double) d) : Double.toString(d);
+            }
+            default -> {
+                var s = val.asString();
+                yield s != null ? s : "";
+            }
+        };
+    }
+
+    private static boolean compareCondition(DynValue left, String op, DynValue right) {
+        var ls = conditionString(left);
+        var rs = conditionString(right);
+        var ln = conditionNumber(left);
+        var rn = conditionNumber(right);
+        boolean numeric = ln != null && rn != null;
+        return switch (op) {
+            case "=", "==" -> ls.equals(rs);
+            case "!=", "<>" -> !ls.equals(rs);
+            case "<" -> numeric ? ln < rn : ls.compareTo(rs) < 0;
+            case "<=" -> numeric ? ln <= rn : ls.compareTo(rs) <= 0;
+            case ">" -> numeric ? ln > rn : ls.compareTo(rs) > 0;
+            case ">=" -> numeric ? ln >= rn : ls.compareTo(rs) >= 0;
+            default -> false;
+        };
+    }
 
     public static boolean isTruthy(DynValue val) {
         if (val == null || val.isNull()) return false;

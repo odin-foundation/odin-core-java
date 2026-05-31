@@ -366,6 +366,47 @@ class TransformEngineTest {
             var v = result.getOutput().get("Name");
             assertTrue(v == null || v.isNull());
         }
+
+        private DynValue runWithCondition(String condition, DynValue source) {
+            var seg = new TransformSegment();
+            seg.setCondition(condition);
+            seg.setMappings(List.of(copyMapping("Name", "@.name")));
+            var t = new OdinTransform();
+            t.getTarget().setFormat("json");
+            t.setSegments(List.of(seg));
+            var result = TransformEngine.execute(t, source);
+            assertTrue(result.isSuccess());
+            return result.getOutput().get("Name");
+        }
+
+        @Test void booleanEqualityConditionTrue() {
+            var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("hasDui", bool(true))));
+            assertEquals(str("Alice"), runWithCondition("@.hasDui = true", source));
+        }
+
+        @Test void booleanEqualityConditionFalse() {
+            var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("hasDui", bool(false))));
+            var v = runWithCondition("@.hasDui = true", source);
+            assertTrue(v == null || v.isNull());
+        }
+
+        @Test void stringEqualityCondition() {
+            var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("status", str("active"))));
+            assertEquals(str("Alice"), runWithCondition("@.status = 'active'", source));
+        }
+
+        @Test void numericGreaterThanCondition() {
+            var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("amount", DynValue.ofInteger(100))));
+            assertEquals(str("Alice"), runWithCondition("@.amount > 50", source));
+            var below = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("amount", DynValue.ofInteger(10))));
+            var v = runWithCondition("@.amount > 50", below);
+            assertTrue(v == null || v.isNull());
+        }
+
+        @Test void notEqualCondition() {
+            var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("type", str("STANDARD"))));
+            assertEquals(str("Alice"), runWithCondition("@.type != 'VOID'", source));
+        }
     }
 
     // ═════════════════════════════════════════════════════════════════
