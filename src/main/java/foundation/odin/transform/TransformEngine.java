@@ -66,6 +66,8 @@ public final class TransformEngine {
         DynValue globalOutput;
         Map<String, OdinModifiers> fieldModifiers = new LinkedHashMap<>();
         String sourceFormat;
+        String onValidation;
+        String onError;
     }
 
     // ── Public Entry Point ──
@@ -393,6 +395,9 @@ public final class TransformEngine {
         ctx.enforceConfidential = transform.getEnforceConfidential();
         ctx.globalOutput = DynValue.ofObject(new ArrayList<>());
         ctx.sourceFormat = transform.getSource() != null ? transform.getSource().getFormat() : "";
+        var targetOpts = transform.getTarget() != null ? transform.getTarget().getOptions() : null;
+        ctx.onValidation = targetOpts != null ? targetOpts.get("onValidation") : null;
+        ctx.onError = targetOpts != null ? targetOpts.get("onError") : null;
         return ctx;
     }
 
@@ -494,8 +499,12 @@ public final class TransformEngine {
         String currentPrefix = isRoot ? pathPrefix
                 : (pathPrefix.isEmpty() ? cleanName : pathPrefix + "." + cleanName);
 
-        // Side-effect-only segments (name starts with _)
-        if (name.startsWith("_") && !isRoot && arrayIndex == null) {
+        // Computation-only sink: a `_`-prefixed section runs for side effects only
+        // (accumulators, verbs) and never appears in the output.
+        boolean isSink = name.startsWith("_") && !isRoot && arrayIndex == null;
+
+        // Side-effect-only non-looping sink
+        if (isSink && segment.getSourcePath() == null) {
             for (var mapping : segment.getMappings()) {
                 processMapping(mapping, ctx, ctx.source, output, currentPrefix);
             }
@@ -512,11 +521,15 @@ public final class TransformEngine {
 
             var resultItems = new ArrayList<DynValue>();
             boolean isValueOnly = segment.getMappings().stream().allMatch(m -> m.getTarget().equals("_"));
+            String counterName = segment.getCounterName();
             for (int idx = 0; idx < items.size(); idx++) {
                 var item = items.get(idx);
                 ctx.loopVars.put("_item", item);
                 ctx.loopVars.put("_index", DynValue.ofInteger(idx));
                 ctx.loopVars.put("_length", DynValue.ofInteger(items.size()));
+                if (counterName != null && !counterName.isEmpty()) {
+                    ctx.loopVars.put(counterName, DynValue.ofInteger(idx));
+                }
 
                 var rowOutput = DynValue.ofObject(new ArrayList<>());
                 for (var mapping : segment.getMappings()) {
@@ -542,6 +555,9 @@ public final class TransformEngine {
             ctx.loopVars.remove("_item");
             ctx.loopVars.remove("_index");
             ctx.loopVars.remove("_length");
+            if (counterName != null && !counterName.isEmpty()) ctx.loopVars.remove(counterName);
+
+            if (isSink) return output;
 
             var arrayResult = DynValue.ofArray(resultItems);
             if (!isRoot) {
@@ -612,14 +628,44 @@ public final class TransformEngine {
 
     private static DynValue processMapping(FieldMapping mapping, ExecContext ctx, DynValue currentSource, DynValue output, String pathPrefix) {
         try {
-            var value = evaluateExpression(mapping.getExpression(), ctx, currentSource, output);
+            // Field :if / :unless conditions evaluate `path` truthiness or `path op value`.
+            var ifDir = findMappingDirective(mapping, "if");
+            if (ifDir != null && ifDir.getValue() != null) {
+                if (!evaluateFieldCondition(ifDir.getValue().asString(), ctx, currentSource)) return output;
+            }
+            var unlessDir = findMappingDirective(mapping, "unless");
+            if (unlessDir != null && unlessDir.getValue() != null) {
+                if (evaluateFieldCondition(unlessDir.getValue().asString(), ctx, currentSource)) return output;
+            }
+
+            DynValue value;
+            // :object builds a nested object from an inline {key = @path, ...} spec.
+            var objectDir = findMappingDirective(mapping, "object");
+            if (objectDir != null && objectDir.getValue() != null) {
+                value = buildInlineObject(objectDir.getValue().asString(), ctx, currentSource, output);
+            } else {
+                value = evaluateExpression(mapping.getExpression(), ctx, currentSource, output);
+            }
 
             // Apply mapping directives (type coercion, extraction)
             value = applyMappingDirectives(value, mapping.getDirectives(), ctx.sourceFormat, mapping.getExpression());
 
+            // Validation modifiers: :validate, :enum, :range (honors onValidation policy).
+            if (!validateFieldValue(value, mapping, ctx)) return output;
+
             // Confidential during processing
             if (mapping.getModifiers() != null && mapping.getModifiers().isConfidential() && ctx.enforceConfidential != null) {
                 value = applyConfidentialToValue(value, ctx.enforceConfidential);
+            }
+
+            // :raw emits inline JSON structurally instead of an escaped string.
+            if (findMappingDirective(mapping, "raw") != null) {
+                value = parseRawJsonValue(value);
+            }
+
+            // :array wraps the value in a single-element array.
+            if (findMappingDirective(mapping, "array") != null) {
+                value = DynValue.ofArray(new ArrayList<>(List.of(value)));
             }
 
             if (!mapping.getTarget().equals("_")) {
@@ -637,12 +683,181 @@ public final class TransformEngine {
         return output;
     }
 
+    private static OdinDirective findMappingDirective(FieldMapping mapping, String name) {
+        if (mapping.getDirectives() == null) return null;
+        for (var d : mapping.getDirectives()) {
+            if (name.equals(d.getName())) return d;
+        }
+        return null;
+    }
+
+    // Evaluate a field :if/:unless condition: `path` truthiness or `path op value`.
+    private static boolean evaluateFieldCondition(String condition, ExecContext ctx, DynValue currentSource) {
+        var trimmed = condition.trim();
+        var matcher = CONDITION_PATTERN.matcher(trimmed);
+        if (matcher.matches()) {
+            var left = resolveFieldConditionPath(matcher.group(1), ctx, currentSource);
+            return compareCondition(left, matcher.group(2), parseConditionValue(matcher.group(3).trim()));
+        }
+        return isTruthy(resolveFieldConditionPath(trimmed, ctx, currentSource));
+    }
+
+    private static DynValue resolveFieldConditionPath(String path, ExecContext ctx, DynValue currentSource) {
+        if (path.startsWith(".")) {
+            return resolvePath(currentSource, path, ctx.constants, ctx.accumulators);
+        }
+        if (currentSource != null && currentSource != ctx.source) {
+            var fromCurrent = resolvePath(currentSource, path, ctx.constants, ctx.accumulators);
+            if (fromCurrent != null && !fromCurrent.isNull()) return fromCurrent;
+        }
+        return resolvePath(ctx.source, path, ctx.constants, ctx.accumulators);
+    }
+
+    // Build a structural object from an inline :object {key = @path, ...} spec.
+    private static DynValue buildInlineObject(String spec, ExecContext ctx, DynValue currentSource, DynValue output) {
+        var trimmed = spec.trim();
+        if (trimmed.startsWith("{")) trimmed = trimmed.substring(1);
+        if (trimmed.endsWith("}")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        var entries = new ArrayList<Map.Entry<String, DynValue>>();
+        if (!trimmed.trim().isEmpty()) {
+            for (var pair : splitObjectPairs(trimmed)) {
+                int eq = pair.indexOf('=');
+                if (eq < 0) continue;
+                var key = pair.substring(0, eq).trim();
+                var rhs = pair.substring(eq + 1).trim();
+                if (key.isEmpty()) continue;
+                var exprResult = parseStringExprForObject(rhs);
+                var val = evaluateExpression(exprResult, ctx, currentSource, output);
+                entries.add(Map.entry(key, val != null ? val : DynValue.ofNull()));
+            }
+        }
+        return DynValue.ofObject(entries);
+    }
+
+    private static FieldExpression parseStringExprForObject(String rhs) {
+        if (rhs.startsWith("@")) return FieldExpression.copy(rhs.substring(1));
+        if (rhs.startsWith("$const.") || rhs.startsWith("$constants.")) return FieldExpression.copy(rhs);
+        return FieldExpression.literal(OdinValue.ofString(rhs));
+    }
+
+    // Split an inline object body on commas not nested inside braces.
+    private static List<String> splitObjectPairs(String body) {
+        var pairs = new ArrayList<String>();
+        int depth = 0;
+        var current = new StringBuilder();
+        for (int i = 0; i < body.length(); i++) {
+            char ch = body.charAt(i);
+            if (ch == '{') depth++;
+            else if (ch == '}') depth--;
+            if (ch == ',' && depth == 0) {
+                pairs.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(ch);
+            }
+        }
+        if (!current.toString().trim().isEmpty()) pairs.add(current.toString());
+        return pairs;
+    }
+
+    // Parse a string value as JSON for :raw, producing a structural value.
+    private static DynValue parseRawJsonValue(DynValue value) {
+        if (value.getType() != DynValue.Type.String) return value;
+        var s = value.asString();
+        if (s == null) return value;
+        try {
+            return JsonSourceParser.parse(s);
+        } catch (Exception e) {
+            return value;
+        }
+    }
+
+    // Validate a value against :validate / :enum / :range directives.
+    // Returns false when the field should be dropped (onValidation = skip or fail).
+    private static boolean validateFieldValue(DynValue value, FieldMapping mapping, ExecContext ctx) {
+        if (value == null || value.isNull()) return true;
+
+        var validateDir = findMappingDirective(mapping, "validate");
+        var enumDir = findMappingDirective(mapping, "enum");
+        var rangeDir = findMappingDirective(mapping, "range");
+        if (validateDir == null && enumDir == null && rangeDir == null) return true;
+
+        var failures = new ArrayList<String>();
+        var str = coerceToString(value);
+
+        if (validateDir != null && validateDir.getValue() != null) {
+            var pattern = validateDir.getValue().asString();
+            boolean matched = false;
+            try {
+                matched = java.util.regex.Pattern.compile(pattern).matcher(str).find();
+            } catch (Exception e) {
+                failures.add("invalid validation pattern '" + pattern + "'");
+            }
+            if (!matched && failures.isEmpty()) {
+                failures.add("value '" + str + "' does not match pattern '" + pattern + "'");
+            }
+        }
+
+        if (enumDir != null && enumDir.getValue() != null) {
+            var allowed = new ArrayList<String>();
+            for (var part : enumDir.getValue().asString().split(",")) {
+                var v = part.trim();
+                if (v.length() >= 2 && ((v.charAt(0) == '"' && v.charAt(v.length() - 1) == '"')
+                        || (v.charAt(0) == '\'' && v.charAt(v.length() - 1) == '\'')))
+                    v = v.substring(1, v.length() - 1);
+                allowed.add(v);
+            }
+            if (!allowed.contains(str)) {
+                failures.add("value '" + str + "' is not one of [" + String.join(", ", allowed) + "]");
+            }
+        }
+
+        if (rangeDir != null && rangeDir.getValue() != null) {
+            var rangeStr = rangeDir.getValue().asString();
+            var parts = rangeStr.split("\\.\\.");
+            Double min = parseDoubleOrNull(parts.length > 0 ? parts[0] : "");
+            Double max = parseDoubleOrNull(parts.length > 1 ? parts[1] : "");
+            Double num = conditionNumber(value);
+            if (num == null) {
+                failures.add("value '" + str + "' is not numeric for range " + rangeStr);
+            } else if ((min != null && num < min) || (max != null && num > max)) {
+                failures.add("value " + str + " is outside range " + rangeStr);
+            }
+        }
+
+        if (failures.isEmpty()) return true;
+
+        var policy = ctx.onValidation != null ? ctx.onValidation : "fail";
+        var message = "Validation failed for '" + mapping.getTarget() + "': " + String.join("; ", failures);
+        if (policy.equals("warn")) {
+            var w = new TransformWarning(message);
+            w.setPath(mapping.getTarget());
+            ctx.warnings.add(w);
+            return true;
+        }
+        if (policy.equals("skip")) {
+            return false;
+        }
+        var err = new TransformError(message, mapping.getTarget());
+        err.setCode(OdinErrors.TransformErrorCodes.T013_VALIDATION_FAILED);
+        ctx.errors.add(err);
+        return false;
+    }
+
+    private static Double parseDoubleOrNull(String s) {
+        try { return Double.parseDouble(s.trim()); } catch (Exception e) { return null; }
+    }
+
     // ── Expression Evaluation ──
 
     private static DynValue evaluateExpression(FieldExpression expr, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
         return switch (expr) {
             case CopyExpression copy -> {
                 var path = copy.getPath();
+
+                // A :counter is readable via @$accumulator.<name> when no accumulator owns the name.
+                var counterAcc = accumulatorCounter(path, ctx);
+                if (counterAcc != null) yield counterAcc;
 
                 // Check loop vars
                 if (ctx.loopVars.containsKey(path)) yield ctx.loopVars.get(path);
@@ -743,8 +958,10 @@ public final class TransformEngine {
                 var path = refArg.getPath();
                 DynValue resolved;
 
+                var counterAcc = accumulatorCounter(path, ctx);
                 // Loop vars
-                if (ctx.loopVars.containsKey(path)) resolved = ctx.loopVars.get(path);
+                if (counterAcc != null) resolved = counterAcc;
+                else if (ctx.loopVars.containsKey(path)) resolved = ctx.loopVars.get(path);
                 else if (path.startsWith("_item") || path.startsWith("@_item")) {
                     var cleanPath = path.startsWith("@") ? path.substring(1) : path;
                     if (cleanPath.equals("_item")) resolved = ctx.loopVars.getOrDefault("_item", DynValue.ofNull());
@@ -770,6 +987,17 @@ public final class TransformEngine {
     }
 
     // ── Path Resolution ──
+
+    // Resolve $accumulator.<name> to a live :counter loop variable when no accumulator owns the name.
+    private static DynValue accumulatorCounter(String path, ExecContext ctx) {
+        String name = null;
+        if (path.startsWith("$accumulator.")) name = path.substring("$accumulator.".length());
+        else if (path.startsWith("$accumulators.")) name = path.substring("$accumulators.".length());
+        if (name == null) return null;
+        if (ctx.accumulators.containsKey(name)) return null;
+        var counter = ctx.loopVars.get(name);
+        return counter != null ? counter : null;
+    }
 
     static DynValue resolvePath(DynValue source, String path, Map<String, DynValue> constants, Map<String, DynValue> accumulators) {
         if (path == null || path.isEmpty()) return source;

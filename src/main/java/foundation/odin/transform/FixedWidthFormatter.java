@@ -33,6 +33,20 @@ public final class FixedWidthFormatter {
         var outputObj = value.asObject();
         if (outputObj == null) return "";
 
+        // Read fixed-width record options.
+        int lineWidth = -1;
+        char padChar = ' ';
+        boolean truncate = true;
+        if (config != null) {
+            var lw = config.getOptions().get("lineWidth");
+            if (lw != null) {
+                try { lineWidth = Integer.parseInt(lw.trim()); } catch (NumberFormatException ignored) {}
+            }
+            var pc = config.getOptions().get("padChar");
+            if (pc != null && !pc.isEmpty()) padChar = pc.charAt(0);
+            if ("false".equals(config.getOptions().get("truncate"))) truncate = false;
+        }
+
         var sb = new StringBuilder();
 
         for (var seg : segments) {
@@ -62,20 +76,32 @@ public final class FixedWidthFormatter {
                     for (var item : items) {
                         var itemObj = item.asObject();
                         if (itemObj == null) continue;
-                        sb.append(buildFixedWidthLine(fieldDefs, itemObj));
+                        sb.append(padToWidth(buildFixedWidthLine(fieldDefs, itemObj), lineWidth, padChar, truncate));
                         sb.append('\n');
                     }
                 }
             } else if (segData.getType() == DynValue.Type.Object) {
                 var obj = segData.asObject();
                 if (obj != null) {
-                    sb.append(buildFixedWidthLine(fieldDefs, obj));
+                    sb.append(padToWidth(buildFixedWidthLine(fieldDefs, obj), lineWidth, padChar, truncate));
                     sb.append('\n');
                 }
             }
         }
 
         return sb.toString();
+    }
+
+    // Pad a record to the configured line width using padChar; truncate when longer.
+    private static String padToWidth(String line, int lineWidth, char padChar, boolean truncate) {
+        if (lineWidth < 0) return line;
+        if (line.length() < lineWidth) {
+            var sb = new StringBuilder(line);
+            while (sb.length() < lineWidth) sb.append(padChar);
+            return sb.toString();
+        }
+        if (line.length() > lineWidth && truncate) return line.substring(0, lineWidth);
+        return line;
     }
 
     private static boolean hasPositionalDirectives(TransformSegment segment) {

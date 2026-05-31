@@ -196,7 +196,12 @@ public final class XmlFormatter {
                 }
 
                 sb.append('>');
-                sb.append(xmlEscape(scalarToString(value)));
+                var mods = modifiers.get(modKey);
+                if (mods != null && mods.isCdata()) {
+                    sb.append(wrapCdata(scalarToString(value)));
+                } else {
+                    sb.append(xmlEscape(scalarToString(value)));
+                }
                 sb.append("</").append(elName).append(">\n");
             }
         }
@@ -251,6 +256,11 @@ public final class XmlFormatter {
         if (n == Math.floor(n) && !Double.isInfinite(n) && Math.abs(n) < 1e15)
             return String.valueOf((long) n);
         return String.valueOf(n);
+    }
+
+    // Wrap text in a CDATA section, splitting any embedded terminator so it stays well-formed.
+    private static String wrapCdata(String s) {
+        return "<![CDATA[" + s.replace("]]>", "]]]]><![CDATA[>") + "]]>";
     }
 
     private static String xmlEscape(String s) {

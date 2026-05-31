@@ -163,6 +163,7 @@ public final class OdinTransformTypes {
         private String name = "";
         private String path = "";
         private String sourcePath;
+        private String counterName;
         private Discriminator segmentDiscriminator;
         private boolean isArray;
         private List<SegmentDirective> directives = new ArrayList<>();
@@ -180,6 +181,9 @@ public final class OdinTransformTypes {
 
         public String getSourcePath() { return sourcePath; }
         public void setSourcePath(String sourcePath) { this.sourcePath = sourcePath; }
+
+        public String getCounterName() { return counterName; }
+        public void setCounterName(String counterName) { this.counterName = counterName; }
 
         public Discriminator getSegmentDiscriminator() { return segmentDiscriminator; }
         public void setSegmentDiscriminator(Discriminator d) { this.segmentDiscriminator = d; }

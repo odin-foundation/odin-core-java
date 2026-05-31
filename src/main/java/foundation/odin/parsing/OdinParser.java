@@ -26,14 +26,14 @@ public final class OdinParser {
     }
 
     public static OdinDocument parseTokens(List<Token> tokens, String source, ParseOptions options) {
-        var state = new ParserState(tokens, options);
+        var state = new ParserState(tokens, options, source);
         var docs = parseDocuments(state);
         if (docs.isEmpty()) return OdinDocument.empty();
         return docs.get(docs.size() - 1);
     }
 
     public static List<OdinDocument> parseTokensMulti(List<Token> tokens, String source, ParseOptions options) {
-        var state = new ParserState(tokens, options);
+        var state = new ParserState(tokens, options, source);
         return parseDocuments(state);
     }
 
@@ -42,13 +42,15 @@ public final class OdinParser {
     private static final class ParserState {
         final List<Token> tokens;
         final ParseOptions options;
+        final String source;
         int pos;
         String currentHeader;
         String lastAbsoluteHeader; // Tracks the last non-relative header for resolving relative headers
 
-        ParserState(List<Token> tokens, ParseOptions options) {
+        ParserState(List<Token> tokens, ParseOptions options, String source) {
             this.tokens = tokens;
             this.options = options;
+            this.source = source != null ? source : "";
             this.pos = 0;
             this.currentHeader = null;
             this.lastAbsoluteHeader = null;
@@ -154,6 +156,16 @@ public final class OdinParser {
                 case Path, BooleanLiteral ->
                     parseAssignment(state, inMetadata, metadata, assignments, modifiers, arrayIndices);
 
+                case Directive -> {
+                    // Bare segment-directive line (e.g. `:loop vehicles`, `:counter idx`) →
+                    // synthetic `<header>._<name>` assignment, mirroring `_name = "..."`.
+                    if (state.currentHeader != null && isBareDirective(token.getValue())) {
+                        parseBareDirective(state, assignments);
+                    } else {
+                        state.advance();
+                    }
+                }
+
                 case Newline, Comment -> {
                     boolean wasComment = token.getTokenType() == TokenType.Comment;
                     boolean wasNewline = !wasComment;
@@ -186,6 +198,46 @@ public final class OdinParser {
 
         return new OdinDocument(metadata, assignments, modifiers,
                 imports, schemas, conditionals, comments.isEmpty() ? null : comments);
+    }
+
+    // ── Bare Segment-Directive Lines ──
+
+    private static final Set<String> BARE_DIRECTIVES =
+            Set.of("loop", "counter", "from", "if", "elif", "else", "literal");
+
+    private static boolean isBareDirective(String name) {
+        return BARE_DIRECTIVES.contains(name);
+    }
+
+    // Parse `:name rest-of-line` into a synthetic `<header>._name = "rest"` assignment.
+    private static void parseBareDirective(ParserState state, OrderedMap<String, OdinValue> assignments) {
+        String name = state.current().getValue();
+        state.advance(); // consume directive token
+
+        String value = "true";
+        if (!state.isAtEnd()) {
+            var t = state.current();
+            var tt = t.getTokenType();
+            if (tt != TokenType.Newline && tt != TokenType.Comment) {
+                int valStart = t.getStart();
+                int valEnd = t.getEnd();
+                while (!state.isAtEnd()) {
+                    var ct = state.current();
+                    var ctt = ct.getTokenType();
+                    if (ctt == TokenType.Newline || ctt == TokenType.Comment) break;
+                    valEnd = ct.getEnd();
+                    state.advance();
+                }
+                if (valStart >= 0 && valEnd <= state.source.length() && valEnd > valStart) {
+                    value = state.source.substring(valStart, valEnd);
+                }
+            }
+        }
+
+        String fullPath = state.currentHeader + "._" + name;
+        if (!assignments.containsKey(fullPath)) {
+            assignments.set(fullPath, OdinValue.ofString(value));
+        }
     }
 
     // ── Header Handling ──
@@ -223,8 +275,8 @@ public final class OdinParser {
         } else if (headerValue.charAt(0) == '@') {
             state.currentHeader = headerValue.substring(1);
             return false;
-        } else if (!headerValue.contains("[] :") && parseInlineHeaderDirective(headerValue) != null) {
-            // {Segment :type "value"} / {Segment :if "expr"} → synthetic <path>._<name>
+        } else if (parseInlineHeaderDirective(headerValue) != null) {
+            // {Segment :type "value"} / {Segment :if "expr"} / {Segment[] :loop path} → synthetic <path>._<name>
             var directive = parseInlineHeaderDirective(headerValue);
             String path = directive[0];
             if (path.startsWith(".") && state.lastAbsoluteHeader != null) {
@@ -275,6 +327,9 @@ public final class OdinParser {
         else if (rest.startsWith("elif")) name = "elif";
         else if (rest.startsWith("if")) name = "if";
         else if (rest.startsWith("else")) name = "else";
+        else if (rest.startsWith("loop")) name = "loop";
+        else if (rest.startsWith("counter")) name = "counter";
+        else if (rest.startsWith("from")) name = "from";
         else return null;
         String afterName = rest.substring(name.length());
         // Directive name must be a whole token (followed by whitespace or end).
@@ -292,7 +347,7 @@ public final class OdinParser {
                 return null;
             return new String[] { path, name, afterName.substring(1, afterName.length() - 1) };
         }
-        // :if / :elif capture the unquoted expression up to the closing brace.
+        // :if / :elif / :loop / :counter / :from capture the unquoted expression up to the closing brace.
         if (afterName.isEmpty()) return null;
         String expr = afterName.strip();
         // A fully double-quoted expression is a legacy infix string; unwrap it.

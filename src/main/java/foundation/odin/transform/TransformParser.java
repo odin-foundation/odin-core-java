@@ -344,7 +344,7 @@ public final class TransformParser {
     // ── Merge directive modifiers ──
 
     private static OdinModifiers mergeDirectiveModifiers(OdinModifiers modifiers, List<OdinDirective> directives) {
-        boolean hasConf = false, hasReq = false, hasDep = false, hasAttr = false;
+        boolean hasConf = false, hasReq = false, hasDep = false, hasAttr = false, hasCdata = false;
         String ns = null;
         for (var d : directives) {
             switch (d.getName()) {
@@ -352,20 +352,22 @@ public final class TransformParser {
                 case "required": hasReq = true; break;
                 case "deprecated": hasDep = true; break;
                 case "attr": hasAttr = true; break;
+                case "cdata": hasCdata = true; break;
                 case "ns": if (d.getValue() != null) ns = d.getValue().asString(); break;
             }
         }
 
-        if (!hasConf && !hasReq && !hasDep && !hasAttr && ns == null) return modifiers;
+        if (!hasConf && !hasReq && !hasDep && !hasAttr && !hasCdata && ns == null) return modifiers;
 
         boolean mReq = modifiers != null && modifiers.isRequired();
         boolean mConf = modifiers != null && modifiers.isConfidential();
         boolean mDep = modifiers != null && modifiers.isDeprecated();
         boolean mAttr = modifiers != null && modifiers.isAttr();
+        boolean mCdata = modifiers != null && modifiers.isCdata();
         String mNs = modifiers != null ? modifiers.getNs() : null;
 
         return new OdinModifiers(mReq || hasReq, mConf || hasConf, mDep || hasDep, mAttr || hasAttr,
-                ns != null ? ns : mNs);
+                ns != null ? ns : mNs, mCdata || hasCdata);
     }
 
     // ── Segments ──
@@ -422,6 +424,7 @@ public final class TransformParser {
 
     private static TransformSegment buildSegment(String name, List<SectionField> fields) {
         String sourcePath = null;
+        String counterName = null;
         Discriminator discriminator = null;
         Integer pass = null;
         String condition = null;
@@ -454,6 +457,9 @@ public final class TransformParser {
                     case "_loop":
                     case "_from":
                         sourcePath = odinValueToString(value);
+                        break;
+                    case "_counter":
+                        counterName = odinValueToString(value);
                         break;
                     case "_pass":
                         Long passLong = value.asInt64();
@@ -538,6 +544,7 @@ public final class TransformParser {
         segment.setName(name);
         segment.setPath(name);
         segment.setSourcePath(sourcePath);
+        segment.setCounterName(counterName);
         segment.setSegmentDiscriminator(discriminator);
         segment.setIsArray(isArray);
         segment.setMappings(orderedMappings);
@@ -719,6 +726,36 @@ public final class TransformParser {
             while (pos < trimmed.length() && Character.isWhitespace(trimmed.charAt(pos))) pos++;
             if (pos >= trimmed.length() || trimmed.charAt(pos) != ':') break;
 
+            // :if / :unless capture the rest of the line as a condition expression.
+            int nameEnd = pos + 1;
+            while (nameEnd < trimmed.length() && !Character.isWhitespace(trimmed.charAt(nameEnd))) nameEnd++;
+            var condName = trimmed.substring(pos + 1, nameEnd);
+            if (condName.equals("if") || condName.equals("unless")) {
+                var rest = nameEnd < trimmed.length() ? trimmed.substring(nameEnd).trim() : "";
+                dirs.add(new OdinDirective(condName, DirectiveValue.fromString(rest)));
+                break;
+            }
+
+            // :validate / :enum / :range capture a single value (quoted or to next directive).
+            if (condName.equals("validate") || condName.equals("enum") || condName.equals("range")) {
+                var result = parseConstraintDirective(condName, trimmed.substring(nameEnd));
+                dirs.add(result.dir);
+                pos = nameEnd + result.consumed;
+                continue;
+            }
+
+            // :object / :raw / :array structural modifiers.
+            if (condName.equals("object")) {
+                var rest = nameEnd < trimmed.length() ? trimmed.substring(nameEnd).trim() : "";
+                dirs.add(new OdinDirective(condName, DirectiveValue.fromString(rest)));
+                break;
+            }
+            if (condName.equals("raw") || condName.equals("array")) {
+                dirs.add(new OdinDirective(condName, null));
+                pos = nameEnd;
+                continue;
+            }
+
             var result = parseExtractionDirective(trimmed.substring(pos));
             if (result.dir != null) {
                 dirs.add(result.dir);
@@ -728,6 +765,26 @@ public final class TransformParser {
             }
         }
         return dirs;
+    }
+
+    private record ParsedDirectiveResult(OdinDirective dir, int consumed) {}
+
+    // Parse :validate/:enum/:range value: a quoted string or an unquoted token up to the next directive.
+    private static ParsedDirectiveResult parseConstraintDirective(String name, String s) {
+        int pos = 0;
+        while (pos < s.length() && Character.isWhitespace(s.charAt(pos))) pos++;
+        String value;
+        if (pos < s.length() && s.charAt(pos) == '"') {
+            var parsed = parseQuotedStringArg(s.substring(pos));
+            value = parsed.value;
+            pos += parsed.consumed;
+        } else {
+            int valEnd = pos;
+            while (valEnd < s.length() && !Character.isWhitespace(s.charAt(valEnd))) valEnd++;
+            value = s.substring(pos, valEnd);
+            pos = valEnd;
+        }
+        return new ParsedDirectiveResult(new OdinDirective(name, DirectiveValue.fromString(value)), pos);
     }
 
     private record ParsedVerbExpr(FieldExpression expr, int consumed) {}
@@ -914,7 +971,7 @@ public final class TransformParser {
                  "decimals", "currencyCode",
                  "leftPad", "rightPad", "truncate", "default",
                  "upper", "lower",
-                 "required", "confidential", "deprecated", "attr", "ns" -> true;
+                 "required", "confidential", "deprecated", "attr", "ns", "cdata" -> true;
             default -> false;
         };
 
@@ -1048,6 +1105,11 @@ public final class TransformParser {
                 var trimmed = strVal.getValue().trim();
                 if (trimmed.startsWith("@")) yield parseStringExpressionWithDirectives(trimmed);
                 if (trimmed.startsWith("%")) yield parseStringExpressionWithDirectives(trimmed);
+                if (trimmed.startsWith(":")) {
+                    // Leading directive (e.g. :object {...}) produces a null base value plus directives.
+                    var dirs = parseRemainingDirectives(trimmed);
+                    yield new ExprWithDirs(FieldExpression.literal(OdinValue.ofNull()), dirs);
+                }
                 if (trimmed.startsWith("$const.") || trimmed.startsWith("$constants."))
                     yield new ExprWithDirs(FieldExpression.copy(trimmed), new ArrayList<>());
                 yield new ExprWithDirs(FieldExpression.literal(value), new ArrayList<>());
