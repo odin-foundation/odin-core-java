@@ -111,11 +111,18 @@ public final class TransformEngine {
 
         var segments = orderSegmentsByPass(transform.getSegments());
 
-        Integer currentPass = null;
-        boolean isFirstPass = true;
+        // Group segments by pass (preserving order) so conditional chains reset at pass boundaries.
+        var passOrder = new ArrayList<Integer>();
+        var byPass = new LinkedHashMap<Integer, List<TransformSegment>>();
         for (var segment : segments) {
             Integer segPass = segment.getPass();
-            if (!Objects.equals(segPass, currentPass) && !isFirstPass) {
+            if (!byPass.containsKey(segPass)) passOrder.add(segPass);
+            byPass.computeIfAbsent(segPass, k -> new ArrayList<>()).add(segment);
+        }
+
+        boolean isFirstPass = true;
+        for (var passNum : passOrder) {
+            if (!isFirstPass) {
                 // Reset non-persist accumulators on pass change
                 for (var kvp : transform.getAccumulators().entrySet()) {
                     if (!kvp.getValue().isPersist()) {
@@ -123,11 +130,8 @@ public final class TransformEngine {
                     }
                 }
             }
-            currentPass = segPass;
             isFirstPass = false;
-
-            output = processSegment(segment, ctx, output, "");
-            ctx.globalOutput = output;
+            output = processSegmentList(byPass.get(passNum), ctx, output);
         }
 
         // Confidential enforcement
@@ -393,6 +397,70 @@ public final class TransformEngine {
     }
 
     // ── Segment Processing ──
+
+    // Branch state for an if/elif/else chain.
+    private enum BranchState { NONE, PENDING, TAKEN }
+
+    // Process a list of segments, honoring if/elif/else conditional chains.
+    // A chain is a run of consecutive segments: one `if`, then any `elif`, then an
+    // optional `else`. Only the first branch whose condition holds is emitted; the
+    // chain breaks on any non-chain segment.
+    private static DynValue processSegmentList(List<TransformSegment> segments, ExecContext ctx, DynValue output) {
+        var branch = BranchState.NONE;
+
+        for (var segment : segments) {
+            var ifDir = findDirective(segment, "if");
+            var elifDir = findDirective(segment, "elif");
+            var elseDir = findDirective(segment, "else");
+
+            if (ifDir != null) {
+                boolean taken = evaluateSegmentCondition(ifDir, ctx);
+                branch = taken ? BranchState.TAKEN : BranchState.PENDING;
+                if (taken) output = processSegment(segment, ctx, output, "");
+            } else if (elifDir != null) {
+                if (branch == BranchState.NONE) {
+                    ctx.errors.add(OdinErrors.danglingBranchError("elif", segment.getPath()));
+                    continue;
+                }
+                if (branch == BranchState.TAKEN) continue;
+                boolean taken = evaluateSegmentCondition(elifDir, ctx);
+                branch = taken ? BranchState.TAKEN : BranchState.PENDING;
+                if (taken) output = processSegment(segment, ctx, output, "");
+            } else if (elseDir != null) {
+                if (branch == BranchState.NONE) {
+                    ctx.errors.add(OdinErrors.danglingBranchError("else", segment.getPath()));
+                    continue;
+                }
+                if (branch == BranchState.PENDING) output = processSegment(segment, ctx, output, "");
+                branch = BranchState.NONE;
+            } else {
+                branch = BranchState.NONE;
+                output = processSegment(segment, ctx, output, "");
+            }
+            ctx.globalOutput = output;
+        }
+        return output;
+    }
+
+    private static SegmentDirective findDirective(TransformSegment segment, String type) {
+        if (segment.getDirectives() == null) return null;
+        for (var d : segment.getDirectives()) {
+            if (type.equals(d.getDirectiveType())) return d;
+        }
+        return null;
+    }
+
+    // Evaluate a segment condition: a verb/reference expression coerced to truthy,
+    // or a legacy infix string via the comparison evaluator.
+    private static boolean evaluateSegmentCondition(SegmentDirective directive, ExecContext ctx) {
+        if (directive.getExpr() != null) {
+            var result = evaluateExpression(directive.getExpr(), ctx, ctx.source, ctx.globalOutput);
+            return isTruthy(result);
+        }
+        var value = directive.getValue();
+        if (value == null || value.isEmpty()) return false;
+        return evaluateCondition(value, ctx);
+    }
 
     private static DynValue processSegment(TransformSegment segment, ExecContext ctx, DynValue output, String pathPrefix) {
         // Condition check

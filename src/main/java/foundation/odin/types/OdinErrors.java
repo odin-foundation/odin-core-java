@@ -310,8 +310,17 @@ public final class OdinErrors {
         public static final String T009_LOOP_SOURCE_NOT_ARRAY = "T009";
         public static final String T010_POSITION_OVERFLOW = "T010";
         public static final String T011_INCOMPATIBLE_CONVERSION = "T011";
+        public static final String T012_DANGLING_BRANCH = "T012";
 
         private TransformErrorCodes() {}
+    }
+
+    // Conditional branch (elif/else) with no preceding if.
+    public static OdinTransformTypes.TransformError danglingBranchError(String directive, String segment) {
+        var error = new OdinTransformTypes.TransformError(
+                "'" + directive + "' segment has no preceding 'if'", segment);
+        error.setCode(TransformErrorCodes.T012_DANGLING_BRANCH);
+        return error;
     }
 
     // ── PatchError ──

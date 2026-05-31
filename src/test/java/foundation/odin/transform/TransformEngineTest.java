@@ -410,6 +410,197 @@ class TransformEngineTest {
     }
 
     // ═════════════════════════════════════════════════════════════════
+    //  Verb-expression conditions
+    // ═════════════════════════════════════════════════════════════════
+
+    @Nested class VerbConditionTests {
+
+        private DynValue run(String transformText, String json) {
+            var transform = TransformParser.parse(transformText);
+            var input = JsonSourceParser.parse(json);
+            var result = TransformEngine.execute(transform, input);
+            assertTrue(result.isSuccess(), () -> "errors: " + result.getErrors().stream()
+                    .map(e -> e.getCode() + ":" + e.getMessage()).toList());
+            return result.getOutput();
+        }
+
+        @Test void headerInlineVerbConditionTrue() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Quote}
+DriverName = @driver.name
+
+{HighRisk :if %and @driver.hasDui %lt @driver.age ##25}
+flag = "high-risk"
+""";
+            var out = run(t, "{\"driver\":{\"name\":\"Pat\",\"hasDui\":true,\"age\":22}}");
+            assertNotNull(out.get("HighRisk"));
+        }
+
+        @Test void headerInlineVerbConditionFalse() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Quote}
+DriverName = @driver.name
+
+{HighRisk :if %and @driver.hasDui %lt @driver.age ##25}
+flag = "high-risk"
+""";
+            var out = run(t, "{\"driver\":{\"name\":\"Sam\",\"hasDui\":true,\"age\":40}}");
+            assertNotNull(out.get("Quote"));
+            var hr = out.get("HighRisk");
+            assertTrue(hr == null || hr.isNull());
+        }
+
+        @Test void bodyLineVerbCondition() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Dui}
+_if = %eq @driver.state "TX"
+state = @driver.state
+""";
+            var present = run(t, "{\"driver\":{\"state\":\"TX\"}}");
+            assertNotNull(present.get("Dui"));
+            var absent = run(t, "{\"driver\":{\"state\":\"CA\"}}");
+            var dui = absent.get("Dui");
+            assertTrue(dui == null || dui.isNull());
+        }
+
+        @Test void orVerbCondition() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Flag :if %or @a @b}
+v = "yes"
+""";
+            assertNotNull(run(t, "{\"a\":false,\"b\":true}").get("Flag"));
+            var none = run(t, "{\"a\":false,\"b\":false}").get("Flag");
+            assertTrue(none == null || none.isNull());
+        }
+
+        @Test void notVerbCondition() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Flag :if %not @disabled}
+v = "yes"
+""";
+            assertNotNull(run(t, "{\"disabled\":false}").get("Flag"));
+            var off = run(t, "{\"disabled\":true}").get("Flag");
+            assertTrue(off == null || off.isNull());
+        }
+
+        @Test void referenceTruthyCondition() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Dui :if @driver.hasDui}
+v = "yes"
+""";
+            assertNotNull(run(t, "{\"driver\":{\"hasDui\":true}}").get("Dui"));
+            var off = run(t, "{\"driver\":{\"hasDui\":false}}").get("Dui");
+            assertTrue(off == null || off.isNull());
+        }
+
+        @Test void legacyQuotedInfixCondition() {
+            var t = """
+{$}
+direction = "json->json"
+
+{Dui}
+_if = "@driver.has_dui = true"
+state = @driver.state
+""";
+            var present = run(t, "{\"driver\":{\"has_dui\":true,\"state\":\"TX\"}}");
+            assertNotNull(present.get("Dui"));
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    //  Conditional chains (if/elif/else)
+    // ═════════════════════════════════════════════════════════════════
+
+    @Nested class ConditionalChainTests {
+
+        private static final String CHAIN = """
+{$}
+direction = "json->json"
+
+{HighRisk :if %eq @driver.tier "dui"}
+band = "high-risk"
+
+{YoungDriver :elif %lt @driver.age ##25}
+band = "young-driver"
+
+{Standard :else}
+band = "standard"
+""";
+
+        private List<String> bands(String json) {
+            var result = TransformEngine.execute(TransformParser.parse(CHAIN), JsonSourceParser.parse(json));
+            assertTrue(result.isSuccess());
+            var keys = new ArrayList<String>();
+            for (var e : result.getOutput().asObject()) keys.add(e.getKey());
+            return keys;
+        }
+
+        @Test void takesIfBranchAndSkipsRest() {
+            assertEquals(List.of("HighRisk"), bands("{\"driver\":{\"tier\":\"dui\",\"age\":30}}"));
+        }
+
+        @Test void fallsThroughToMatchingElif() {
+            assertEquals(List.of("YoungDriver"), bands("{\"driver\":{\"tier\":\"std\",\"age\":20}}"));
+        }
+
+        @Test void fallsThroughToElse() {
+            assertEquals(List.of("Standard"), bands("{\"driver\":{\"tier\":\"std\",\"age\":40}}"));
+        }
+
+        @Test void orphanElifRaisesT012() {
+            var t = """
+{$}
+direction = "json->json"
+
+{A}
+x = "1"
+
+{B :elif %eq @y "z"}
+v = "2"
+""";
+            var result = TransformEngine.execute(TransformParser.parse(t), JsonSourceParser.parse("{\"y\":\"q\"}"));
+            assertFalse(result.isSuccess());
+            assertTrue(result.getErrors().stream()
+                    .anyMatch(e -> "T012".equals(e.getCode())));
+        }
+
+        @Test void orphanElseRaisesT012() {
+            var t = """
+{$}
+direction = "json->json"
+
+{A}
+x = "1"
+
+{B :else}
+v = "2"
+""";
+            var result = TransformEngine.execute(TransformParser.parse(t), JsonSourceParser.parse("{}"));
+            assertFalse(result.isSuccess());
+            assertTrue(result.getErrors().stream()
+                    .anyMatch(e -> "T012".equals(e.getCode())));
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
     //  Modifiers
     // ═════════════════════════════════════════════════════════════════
 

@@ -211,12 +211,16 @@ public final class OdinTransformTypes {
     public static final class SegmentDirective {
         private String directiveType = "";
         private String value;
+        private FieldExpression expr;
 
         public String getDirectiveType() { return directiveType; }
         public void setDirectiveType(String type) { this.directiveType = type; }
 
         public String getValue() { return value; }
         public void setValue(String value) { this.value = value; }
+
+        public FieldExpression getExpr() { return expr; }
+        public void setExpr(FieldExpression expr) { this.expr = expr; }
     }
 
     // ── SegmentItem (discriminated union) ──

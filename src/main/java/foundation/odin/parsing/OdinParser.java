@@ -259,7 +259,11 @@ public final class OdinParser {
         }
     }
 
-    // Match {path :type "value"} / {path :if "value"} → [path, name, value], else null.
+    // Match inline header directives → [path, name, value], else null.
+    //   {path :type "value"}     → quoted discriminator value
+    //   {path :if <expr>}        → unquoted condition expression to end
+    //   {path :elif <expr>}      → unquoted condition expression to end
+    //   {path :else}             → bare flag
     private static String[] parseInlineHeaderDirective(String headerValue) {
         int colon = headerValue.indexOf(" :");
         if (colon < 0) return null;
@@ -268,13 +272,34 @@ public final class OdinParser {
         String rest = headerValue.substring(colon + 2);
         String name;
         if (rest.startsWith("type")) name = "type";
+        else if (rest.startsWith("elif")) name = "elif";
         else if (rest.startsWith("if")) name = "if";
+        else if (rest.startsWith("else")) name = "else";
         else return null;
-        String afterName = rest.substring(name.length()).stripLeading();
-        if (afterName.length() < 2 || afterName.charAt(0) != '"' || afterName.charAt(afterName.length() - 1) != '"')
-            return null;
-        String value = afterName.substring(1, afterName.length() - 1);
-        return new String[] { path, name, value };
+        String afterName = rest.substring(name.length());
+        // Directive name must be a whole token (followed by whitespace or end).
+        if (!afterName.isEmpty() && !Character.isWhitespace(afterName.charAt(0))) return null;
+        afterName = afterName.stripLeading();
+
+        if (name.equals("else")) {
+            if (!afterName.isEmpty()) return null;
+            return new String[] { path, name, "true" };
+        }
+        if (name.equals("type")) {
+            // :type keeps a quoted discriminator value.
+            if (afterName.length() < 2 || afterName.charAt(0) != '"'
+                    || afterName.charAt(afterName.length() - 1) != '"')
+                return null;
+            return new String[] { path, name, afterName.substring(1, afterName.length() - 1) };
+        }
+        // :if / :elif capture the unquoted expression up to the closing brace.
+        if (afterName.isEmpty()) return null;
+        String expr = afterName.strip();
+        // A fully double-quoted expression is a legacy infix string; unwrap it.
+        if (expr.length() >= 2 && expr.charAt(0) == '"' && expr.charAt(expr.length() - 1) == '"') {
+            expr = expr.substring(1, expr.length() - 1);
+        }
+        return new String[] { path, name, expr };
     }
 
     // ── Import, Schema, Conditional ──

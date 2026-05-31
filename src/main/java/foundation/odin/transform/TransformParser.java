@@ -425,6 +425,7 @@ public final class TransformParser {
         Discriminator discriminator = null;
         Integer pass = null;
         String condition = null;
+        var directives = new ArrayList<SegmentDirective>();
         var mappings = new ArrayList<FieldMapping>();
         var children = new ArrayList<TransformSegment>();
         var childFields = new LinkedHashMap<String, List<SectionField>>();
@@ -464,7 +465,13 @@ public final class TransformParser {
                         break;
                     case "_if":
                     case "_when":
-                        condition = odinValueToString(value);
+                        directives.add(buildConditionDirective("if", value));
+                        break;
+                    case "_elif":
+                        directives.add(buildConditionDirective("elif", value));
+                        break;
+                    case "_else":
+                        directives.add(buildConditionDirective("else", value));
                         break;
                     case "_discriminator":
                         if (value instanceof OdinReference refVal) {
@@ -537,8 +544,35 @@ public final class TransformParser {
         segment.setChildren(children);
         segment.setItems(items);
         segment.setPass(pass);
+        segment.setDirectives(directives);
         segment.setCondition(condition);
         return segment;
+    }
+
+    // Build an if/elif/else segment directive. Verb / %-expression / reference
+    // conditions are stored as a parsed expression; a legacy infix string is kept verbatim.
+    private static SegmentDirective buildConditionDirective(String type, OdinValue value) {
+        var directive = new SegmentDirective();
+        directive.setDirectiveType(type);
+        if (type.equals("else")) {
+            directive.setValue("");
+            return directive;
+        }
+        switch (value) {
+            case OdinVerb ignored -> directive.setExpr(valueToFieldExpressionWithDirectives(value).expr);
+            case OdinReference ref -> directive.setExpr(FieldExpression.copy(ref.getPath()));
+            case OdinString s -> {
+                var trimmed = s.getValue().trim();
+                if (trimmed.startsWith("%") || trimmed.startsWith("@")) {
+                    directive.setExpr(valueToFieldExpressionWithDirectives(value).expr);
+                } else {
+                    directive.setValue(trimmed);
+                }
+            }
+            default -> directive.setValue(odinValueToString(value));
+        }
+        if (directive.getValue() == null) directive.setValue("");
+        return directive;
     }
 
     private static FieldMapping buildFieldMapping(String target, OdinValue value, OdinModifiers modifiers) {
