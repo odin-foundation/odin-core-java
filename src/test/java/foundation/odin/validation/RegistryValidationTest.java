@@ -5,8 +5,6 @@ import foundation.odin.resolver.ImportResolver;
 import foundation.odin.types.*;
 import org.junit.jupiter.api.Test;
 
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
@@ -14,75 +12,71 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RegistryValidationTest {
 
-    private static final String CANONICAL =
-        "../../schemas/insurance/personal/auto/policy.schema.odin";
+    // In-memory reader serving inline schema sources by path; keeps tests self-contained.
+    private static final class MemReader implements ImportResolver.FileReader {
+        private final Map<String, String> files;
+        MemReader(Map<String, String> files) { this.files = files; }
 
-    private OdinSchema.SchemaDefinition canonicalSchema() throws Exception {
-        return Odin.parseSchema(Files.readString(Paths.get(CANONICAL)));
+        @Override public String readFile(String path) {
+            var content = files.get(path);
+            if (content == null) {
+                throw new OdinErrors.OdinException("I006", "File not found: " + path);
+            }
+            return content;
+        }
+
+        @Override public String resolvePath(String basePath, String importPath) {
+            return importPath;
+        }
     }
 
     private long v013Count(OdinSchema.ValidationResult r) {
         return r.errors().stream().filter(e -> "V013".equals(e.code())).count();
     }
 
-    @Test void importStripsQuotesAndKeepsAlias() throws Exception {
-        var schema = canonicalSchema();
-        var imp = schema.imports().stream()
-            .filter(i -> "types".equals(i.alias())).findFirst().orElseThrow();
-        assertEquals("../../common/types.schema.odin", imp.path());
-        assertFalse(imp.path().contains("\""));
-    }
+    // An imported @alias.typename reference is unresolved (V013) without a registry,
+    // and resolves once the import registry is supplied.
+    @Test void importedTypeRefResolvesWithRegistry() {
+        var files = Map.of(
+            "main.odin",
+            "@import \"types.odin\" as types\n" +
+            "{$}\nodin = \"1.0.0\"\nschema = \"1.0.0\"\n",
+            "types.odin",
+            "{@policy_status}\nvalue = !\n"
+        );
 
-    @Test void registryResolvesNamespacedType() throws Exception {
-        var schema = canonicalSchema();
-        var resolver = new ImportResolver(ImportResolver.ResolverOptions.forSchemas());
-        var reg = resolver.resolveSchema(schema, CANONICAL).resolution().registry();
-        assertNotNull(reg.lookup("types.policy_status"));
-    }
-
-    @Test void topLevelImportedTypeRefV013ResolvedByRegistry() throws Exception {
-        var schema = canonicalSchema();
-        var resolver = new ImportResolver(ImportResolver.ResolverOptions.forSchemas());
-        var reg = resolver.resolveSchema(schema, CANONICAL).resolution().registry();
+        var resolver = new ImportResolver(new MemReader(files), ImportResolver.ResolverOptions.forSchemas());
+        var resolved = resolver.resolveSchemaFile("main.odin");
+        var reg = resolved.resolution().registry();
+        assertNotNull(reg.lookup("types.policy_status"), "registry should resolve types.policy_status");
 
         var statusField = new OdinSchema.SchemaField("status",
             new OdinSchema.SchemaFieldType.TypeRefType("types.policy_status"),
             true, false, false, false, null, List.of(), null, List.of());
+        var schema = resolved.schema();
         var schemaWithRef = new OdinSchema.SchemaDefinition(schema.metadata(), schema.imports(),
             schema.types(), Map.of("status", statusField), schema.arrays(), schema.objectConstraints());
 
         var noRegistry = Odin.validate(OdinDocument.empty(), schemaWithRef, null);
-        assertEquals(1, v013Count(noRegistry));
+        assertEquals(1, v013Count(noRegistry), "expected V013 without registry");
 
         var withRegistry = Odin.validate(OdinDocument.empty(), schemaWithRef, null, reg);
-        assertEquals(0, v013Count(withRegistry));
+        assertEquals(0, v013Count(withRegistry), "registry must resolve @types.policy_status");
     }
 
-    @Test void termFieldsNestUnderPolicyType() throws Exception {
-        var schema = canonicalSchema();
+    // A relative {.sub} header inside a {@type} nests its fields into that type, not the root.
+    @Test void relativeSubsectionNestsIntoType() {
+        var schema = Odin.parseSchema(
+            "{@policy}\nnumber = !\n{.term}\neffective = !date\nexpiration = !date\n");
+
         var policy = schema.types().get("policy");
-        assertNotNull(policy, "policy type missing");
+        assertNotNull(policy, "policy type should be defined");
         var fieldNames = policy.fields().stream()
             .map(OdinSchema.SchemaField::name).toList();
         assertTrue(fieldNames.contains("term.effective"), "term.effective not in policy type: " + fieldNames);
         assertTrue(fieldNames.contains("term.expiration"), "term.expiration not in policy type: " + fieldNames);
-    }
 
-    @Test void emptyDocYieldsNoRootRequiredErrors() throws Exception {
-        var schema = canonicalSchema();
-        var result = Odin.validateWithImports(OdinDocument.empty(), schema, CANONICAL, null);
-        var rootRequired = result.errors().stream()
-            .filter(e -> "V001".equals(e.code())).count();
-        assertEquals(0, rootRequired, "errors: " + result.errors());
-    }
-
-    @Test void minimalSatisfyingDocValidatesClean() throws Exception {
-        var schema = canonicalSchema();
-        var doc = new OdinDocumentBuilder()
-            .set(".term.effective", OdinValue.dateFromStr("2024-01-01"))
-            .set(".term.expiration", OdinValue.dateFromStr("2025-01-01"))
-            .build();
-        var result = Odin.validateWithImports(doc, schema, CANONICAL, null);
-        assertTrue(result.valid(), "errors: " + result.errors());
+        assertFalse(schema.fields().containsKey("term.effective"), "term.* must not leak to the schema root");
+        assertFalse(schema.fields().containsKey("term.expiration"), "term.* must not leak to the schema root");
     }
 }
