@@ -1,5 +1,7 @@
 package foundation.odin.parsing;
 
+import foundation.odin.types.OdinDirective;
+import foundation.odin.types.OdinDirective.DirectiveValue;
 import foundation.odin.types.OdinErrors.OdinParseException;
 import foundation.odin.types.OdinErrors.ParseErrorCode;
 import foundation.odin.types.OdinModifiers;
@@ -52,10 +54,10 @@ public final class ValueParser {
                         "Unquoted string \"" + token.getValue() + "\" - use double quotes");
             }
 
-            case NumberPrefix -> new ParseResult(parseNumber(token.getValue(), token.getLine(), token.getColumn()), 1);
-            case IntegerPrefix -> new ParseResult(parseInteger(token.getValue(), token.getLine(), token.getColumn()), 1);
-            case CurrencyPrefix -> new ParseResult(parseCurrency(token.getValue(), token.getLine(), token.getColumn()), 1);
-            case PercentPrefix -> new ParseResult(parsePercent(token.getValue(), token.getLine(), token.getColumn()), 1);
+            case NumberPrefix -> prefixedReferenceOrNumber(tokens, pos, "number");
+            case IntegerPrefix -> prefixedReferenceOrNumber(tokens, pos, "integer");
+            case CurrencyPrefix -> prefixedReferenceOrNumber(tokens, pos, "currency");
+            case PercentPrefix -> prefixedReferenceOrNumber(tokens, pos, "percent");
             case ReferencePrefix -> new ParseResult(OdinValue.ofReference(token.getValue()), 1);
             case BinaryPrefix -> new ParseResult(parseBinary(token.getValue(), token.getLine(), token.getColumn()), 1);
             case DateLiteral -> new ParseResult(parseDateValue(token.getValue(), token.getLine(), token.getColumn()), 1);
@@ -127,6 +129,27 @@ public final class ValueParser {
                     ParseErrorCode.UnexpectedCharacter, token.getLine(), token.getColumn(),
                     "unexpected token type " + token.getTokenType() + " for value");
         };
+    }
+
+    // A numeric prefix directly followed by a reference (e.g. `##@.year`, `#$@.premium`)
+    // parses as that reference carrying a synthetic `:type` directive; the engine coerces
+    // the resolved value on output. Otherwise it is a normal typed numeric literal.
+    private static ParseResult prefixedReferenceOrNumber(List<Token> tokens, int pos, String kind) {
+        var token = tokens.get(pos);
+        if (token.getValue().isEmpty() && pos + 1 < tokens.size()
+                && tokens.get(pos + 1).getTokenType() == TokenType.ReferencePrefix) {
+            String path = tokens.get(pos + 1).getValue();
+            var ref = OdinValue.ofReference(path).withDirectives(
+                    List.of(new OdinDirective("type", DirectiveValue.fromString(kind))));
+            return new ParseResult(ref, 2);
+        }
+        OdinValue value = switch (kind) {
+            case "integer" -> parseInteger(token.getValue(), token.getLine(), token.getColumn());
+            case "currency" -> parseCurrency(token.getValue(), token.getLine(), token.getColumn());
+            case "percent" -> parsePercent(token.getValue(), token.getLine(), token.getColumn());
+            default -> parseNumber(token.getValue(), token.getLine(), token.getColumn());
+        };
+        return new ParseResult(value, 1);
     }
 
     public static ModifierResult parseModifiers(List<Token> tokens, int pos) {

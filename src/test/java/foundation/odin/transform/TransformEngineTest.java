@@ -862,5 +862,56 @@ v = "2"
             assertNotNull(data);
             assertEquals(str("ALICE"), data.get("Upper"));
         }
+
+        @Test void interpolatesPathExpression() {
+            var transformText = """
+                    {$}
+                    odin = "1.0.0"
+                    transform = "1.0.0"
+                    direction = "json->json"
+                    target.format = "json"
+
+                    {Data}
+                    Greeting = "Hi ${@.name}!"
+                    """;
+            var t = TransformParser.parse(transformText);
+            var result = TransformEngine.execute(t, DynValue.ofObject(List.of(kv("name", str("Alice")))));
+            assertTrue(result.isSuccess());
+            assertEquals(str("Hi Alice!"), result.getOutput().get("Data").get("Greeting"));
+        }
+
+        @Test void escapedInterpolationStaysLiteral() {
+            var transformText = """
+                    {$}
+                    odin = "1.0.0"
+                    transform = "1.0.0"
+                    direction = "json->json"
+                    target.format = "json"
+
+                    {Data}
+                    Template = "Use \\${@.field} here"
+                    """;
+            var t = TransformParser.parse(transformText);
+            var result = TransformEngine.execute(t, DynValue.ofObject(List.of(kv("field", str("X")))));
+            assertTrue(result.isSuccess());
+            assertEquals(str("Use ${@.field} here"), result.getOutput().get("Data").get("Template"));
+        }
+
+        @Test void escapedDollarBeforeInterpolation() {
+            var transformText = """
+                    {$}
+                    odin = "1.0.0"
+                    transform = "1.0.0"
+                    direction = "json->json"
+                    target.format = "json"
+
+                    {Data}
+                    Price = "Total: \\$${@.amount}"
+                    """;
+            var t = TransformParser.parse(transformText);
+            var result = TransformEngine.execute(t, DynValue.ofObject(List.of(kv("amount", str("42.00")))));
+            assertTrue(result.isSuccess());
+            assertEquals(str("Total: $42.00"), result.getOutput().get("Data").get("Price"));
+        }
     }
 }

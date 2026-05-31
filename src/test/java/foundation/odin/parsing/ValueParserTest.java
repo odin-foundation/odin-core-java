@@ -1,5 +1,6 @@
 package foundation.odin.parsing;
 
+import foundation.odin.types.OdinDirective;
 import foundation.odin.types.OdinErrors;
 import foundation.odin.types.OdinModifiers;
 import foundation.odin.types.OdinOptions;
@@ -205,6 +206,42 @@ class ValueParserTest {
         @Test void dottedReference() {
             var v = parseAssignment("x = @person.name");
             assertEquals("person.name", v.asReference());
+        }
+    }
+
+    // ── Prefix-coerced references ──
+
+    @Nested
+    class PrefixCoercedReferences {
+        private OdinDirective typeDirective(OdinValue v) {
+            assertTrue(v.isReference(), "expected reference");
+            assertNotNull(v.getDirectives());
+            return v.getDirectives().stream()
+                    .filter(d -> d.getName().equals("type"))
+                    .findFirst().orElseThrow();
+        }
+
+        @Test void integerPrefixedReference() {
+            var v = parseAssignment("x = ##@.year");
+            assertEquals(".year", v.asReference());
+            assertEquals("integer", typeDirective(v).getValue().asString());
+        }
+
+        @Test void currencyPrefixedReference() {
+            var v = parseAssignment("x = #$@.premium");
+            assertEquals(".premium", v.asReference());
+            assertEquals("currency", typeDirective(v).getValue().asString());
+        }
+
+        @Test void integerPrefixedReferenceConsumesTwoTokens() {
+            var tokens = tokensOf("x = ##@.year");
+            assertEquals(2, consumedAt(tokens, valueStart(tokens)));
+        }
+
+        @Test void plainIntegerLiteralStillParses() {
+            var v = parseAssignment("x = ##42");
+            assertFalse(v.isReference());
+            assertEquals(42L, v.asInt64());
         }
     }
 

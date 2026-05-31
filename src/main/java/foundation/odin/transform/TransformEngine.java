@@ -876,7 +876,13 @@ public final class TransformEngine {
                 yield resolvePathWithOutput(currentSource, currentOutput, ctx.globalOutput, path, ctx.constants, ctx.accumulators);
             }
 
-            case LiteralExpression lit -> odinValueToDyn(lit.getValue());
+            case LiteralExpression lit -> {
+                var litVal = lit.getValue();
+                if (litVal instanceof OdinValue.OdinString strVal && strVal.getValue().contains("${")) {
+                    yield interpolateString(strVal.getValue(), ctx, currentSource, currentOutput);
+                }
+                yield odinValueToDyn(litVal);
+            }
 
             case TransformExpression txExpr -> executeVerbCall(txExpr.getCall(), ctx, currentSource, currentOutput);
 
@@ -889,6 +895,34 @@ public final class TransformEngine {
                 yield DynValue.ofObject(entries);
             }
         };
+    }
+
+    // Interpolate ${...} expressions in a string template.
+    // ${@path}/${@.path} resolve a source path; ${%verb args} runs a verb; \${...} is a literal ${...}.
+    private static final java.util.regex.Pattern INTERPOLATION =
+            java.util.regex.Pattern.compile("\\\\?\\$\\{([^}]+)\\}");
+
+    private static DynValue interpolateString(String template, ExecContext ctx,
+            DynValue currentSource, DynValue currentOutput) {
+        var matcher = INTERPOLATION.matcher(template);
+        var sb = new StringBuilder();
+        while (matcher.find()) {
+            String match = matcher.group(0);
+            String expr = matcher.group(1).trim();
+            String replacement;
+            if (match.startsWith("\\")) {
+                replacement = "${" + matcher.group(1) + "}";
+            } else if (expr.startsWith("@") || expr.startsWith("%")) {
+                var fieldExpr = TransformParser.parseInlineExpression(expr);
+                var value = evaluateExpression(fieldExpr, ctx, currentSource, currentOutput);
+                replacement = coerceToString(value);
+            } else {
+                replacement = match;
+            }
+            matcher.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(sb);
+        return DynValue.ofString(sb.toString());
     }
 
     // ── Verb Call Execution ──

@@ -617,4 +617,24 @@ class TokenizerTest {
             assertTrue(str.contains("5"));
         }
     }
+
+    // ── Dollar escapes ──
+
+    @Nested
+    class DollarEscapes {
+        @Test void bareDollarEscapeBecomesLiteralDollar() {
+            var tokens = nonTrivialTokens("x = \"\\$5.00\"");
+            assertEquals("$5.00", tokens.get(2).getValue());
+        }
+
+        @Test void escapedInterpolationKeepsBackslashBeforeBrace() {
+            var tokens = nonTrivialTokens("x = \"Use \\${field}\"");
+            assertEquals("Use \\${field}", tokens.get(2).getValue());
+        }
+
+        @Test void dollarBeforeInterpolationIsLiteral() {
+            var tokens = nonTrivialTokens("x = \"Total: \\$${amount}\"");
+            assertEquals("Total: $${amount}", tokens.get(2).getValue());
+        }
+    }
 }

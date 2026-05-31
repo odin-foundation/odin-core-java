@@ -242,6 +242,15 @@ public final class Tokenizer {
                     case '"': value.append('"'); break;
                     case '/': value.append('/'); break;
                     case '0': value.append('\0'); break;
+                    case '$':
+                        // Literal dollar; keep the backslash before `${` so the
+                        // interpolation layer recognizes the escaped marker.
+                        if (!state.isAtEnd() && state.peek() == '{') {
+                            value.append("\\$");
+                        } else {
+                            value.append('$');
+                        }
+                        break;
                     case 'u': {
                         char unicodeChar = scanUnicodeEscape(state, 4, startLine, startCol);
                         int codePoint = unicodeChar;

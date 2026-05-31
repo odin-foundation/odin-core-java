@@ -692,6 +692,11 @@ public final class TransformParser {
 
     // ── Transform Expression Parser ──
 
+    // Parse a single inline expression (e.g. a `${...}` interpolation body) into a FieldExpression.
+    public static FieldExpression parseInlineExpression(String raw) {
+        return parseStringExpressionWithDirectives(raw).expr;
+    }
+
     private record ExprWithDirs(FieldExpression expr, List<OdinDirective> dirs) {}
 
     private static ExprWithDirs parseStringExpressionWithDirectives(String raw) {
