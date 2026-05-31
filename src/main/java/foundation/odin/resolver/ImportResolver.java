@@ -197,8 +197,14 @@ public final class ImportResolver {
     public record ResolvedResult(
             Map<String, ResolvedImport> imports,
             Map<String, OdinSchema.SchemaType> typeRegistry,
-            List<String> resolvedPaths
-    ) {}
+            List<String> resolvedPaths,
+            TypeRegistry registry
+    ) {
+        public ResolvedResult(Map<String, ResolvedImport> imports,
+                Map<String, OdinSchema.SchemaType> typeRegistry, List<String> resolvedPaths) {
+            this(imports, typeRegistry, resolvedPaths, new TypeRegistry());
+        }
+    }
 
     public record ResolvedSchema(
             OdinSchema.SchemaDefinition schema,
@@ -249,20 +255,22 @@ public final class ImportResolver {
         totalFilesLoaded = 0;
         var imports = new LinkedHashMap<String, ResolvedImport>();
         var typeRegistry = new LinkedHashMap<String, OdinSchema.SchemaType>();
+        var registry = new TypeRegistry();
         var resolvedPaths = new ArrayList<String>();
         var detector = new CircularDetector();
 
         if (schema.types() != null) {
             typeRegistry.putAll(schema.types());
+            registry.registerAll(schema.types());
         }
 
         if (schema.imports() != null) {
             for (var imp : schema.imports()) {
-                resolveSchemaImport(imp, basePath, detector, 0, imports, typeRegistry, resolvedPaths);
+                resolveSchemaImport(imp, basePath, detector, 0, imports, typeRegistry, registry, resolvedPaths);
             }
         }
 
-        var resolution = new ResolvedResult(imports, typeRegistry, resolvedPaths);
+        var resolution = new ResolvedResult(imports, typeRegistry, resolvedPaths, registry);
         return new ResolvedSchema(schema, resolution);
     }
 
@@ -270,6 +278,7 @@ public final class ImportResolver {
         totalFilesLoaded = 0;
         var imports = new LinkedHashMap<String, ResolvedImport>();
         var typeRegistry = new LinkedHashMap<String, OdinSchema.SchemaType>();
+        var registry = new TypeRegistry();
         var resolvedPaths = new ArrayList<String>();
         var detector = new CircularDetector();
 
@@ -279,7 +288,7 @@ public final class ImportResolver {
             }
         }
 
-        var resolution = new ResolvedResult(imports, typeRegistry, resolvedPaths);
+        var resolution = new ResolvedResult(imports, typeRegistry, resolvedPaths, registry);
         return new ResolvedDocument(document, resolution);
     }
 
@@ -304,6 +313,7 @@ public final class ImportResolver {
             int depth,
             Map<String, ResolvedImport> imports,
             Map<String, OdinSchema.SchemaType> typeRegistry,
+            TypeRegistry registry,
             List<String> resolvedPaths
     ) {
         if (depth > options.maxImportDepth()) {
@@ -346,12 +356,13 @@ public final class ImportResolver {
                     String qualifiedName = namespace + "_" + entry.getKey();
                     typeRegistry.put(qualifiedName, entry.getValue());
                 }
+                registry.registerAll(importedSchema.types(), namespace);
             }
 
             if (importedSchema.imports() != null) {
                 for (var nestedImp : importedSchema.imports()) {
                     resolveSchemaImport(nestedImp, resolvedPath, detector, depth + 1,
-                            imports, typeRegistry, resolvedPaths);
+                            imports, typeRegistry, registry, resolvedPaths);
                 }
             }
 

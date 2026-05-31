@@ -1,5 +1,6 @@
 package foundation.odin.validation;
 
+import foundation.odin.resolver.ImportResolver.TypeRegistry;
 import foundation.odin.types.*;
 
 import java.util.*;
@@ -11,6 +12,12 @@ public final class ValidationEngine {
 
     public static OdinSchema.ValidationResult validate(
             OdinDocument doc, OdinSchema.SchemaDefinition schema, OdinOptions.ValidateOptions options) {
+        return validate(doc, schema, options, null);
+    }
+
+    public static OdinSchema.ValidationResult validate(
+            OdinDocument doc, OdinSchema.SchemaDefinition schema, OdinOptions.ValidateOptions options,
+            TypeRegistry registry) {
         var opts = options != null ? options : OdinOptions.ValidateOptions.DEFAULT;
         var errors = new ArrayList<OdinSchema.ValidationError>();
 
@@ -94,7 +101,7 @@ public final class ValidationEngine {
         }
 
         // Schema-level reference validation
-        validateSchemaReferences(schema, errors);
+        validateSchemaReferences(schema, registry, errors);
 
         // Strict mode (V011)
         if (opts.isStrict()) {
@@ -515,16 +522,19 @@ public final class ValidationEngine {
 
     // ── Schema Reference Validation ──
 
-    private static void validateSchemaReferences(OdinSchema.SchemaDefinition schema,
-            List<OdinSchema.ValidationError> errors) {
-        // Collect all defined types
-        var definedTypes = new LinkedHashSet<String>();
-        var typeRefFields = new LinkedHashMap<String, String>(); // path -> referenced type name
-
-        // Types defined via @TypeName sections
-        for (String typeName : schema.types().keySet()) {
-            definedTypes.add(typeName);
+    // Resolve a type name via the import registry first, then local schema types.
+    private static OdinSchema.SchemaType lookupType(OdinSchema.SchemaDefinition schema,
+            TypeRegistry registry, String name) {
+        if (registry != null) {
+            var fromRegistry = registry.lookup(name);
+            if (fromRegistry != null) return fromRegistry;
         }
+        return schema.types().get(name);
+    }
+
+    private static void validateSchemaReferences(OdinSchema.SchemaDefinition schema,
+            TypeRegistry registry, List<OdinSchema.ValidationError> errors) {
+        var typeRefFields = new LinkedHashMap<String, String>(); // path -> referenced type name
 
         // Fields that reference types
         for (var entry : schema.fields().entrySet()) {
@@ -533,10 +543,10 @@ public final class ValidationEngine {
             }
         }
 
-        // V013: Check unresolved type references
+        // V013: Check unresolved type references (registry resolves @alias.typename)
         for (var entry : typeRefFields.entrySet()) {
             String refTarget = entry.getValue();
-            if (!definedTypes.contains(refTarget)) {
+            if (lookupType(schema, registry, refTarget) == null) {
                 errors.add(new OdinSchema.ValidationError(entry.getKey(), "V013",
                         "Unresolved type reference: @" + refTarget));
             }

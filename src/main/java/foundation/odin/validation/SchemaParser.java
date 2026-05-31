@@ -21,6 +21,11 @@ public final class SchemaParser {
         boolean inMetadata = false;
         String metaId = null, metaTitle = null, metaDescription = null, metaVersion = null;
 
+        // Relative-header context for {.sub} nesting.
+        String previousHeaderType = "";
+        String previousHeaderPath = "";
+        String currentTypeSubPath = "";
+
         String[] lines = schemaText.split("\n");
         for (String rawLine : lines) {
             String line = rawLine.trim();
@@ -38,9 +43,31 @@ public final class SchemaParser {
                 }
 
                 inMetadata = false;
+
+                // Relative header {.sub}: nest under the last absolute context.
+                if (headerContent.startsWith(".")) {
+                    currentIsArray = false;
+                    String sub = headerContent.substring(1);
+                    if (!previousHeaderType.isEmpty()) {
+                        // Re-open the parent type; route fields under the sub-path (e.g. policy.term.*).
+                        currentHeader = "@" + previousHeaderType;
+                        currentTypeSubPath = sub;
+                        types.putIfAbsent(previousHeaderType, new OdinSchema.SchemaType(previousHeaderType, new ArrayList<>()));
+                    } else {
+                        // Object context: relative headers are siblings under the last absolute path.
+                        currentTypeSubPath = "";
+                        currentHeader = previousHeaderPath.isEmpty() ? sub : previousHeaderPath + "." + sub;
+                    }
+                    continue;
+                }
+
+                // Absolute header resets the relative sub-path context.
+                currentTypeSubPath = "";
                 if (headerContent.endsWith("[]")) {
                     currentHeader = headerContent.substring(0, headerContent.length() - 2);
                     currentIsArray = true;
+                    previousHeaderPath = currentHeader;
+                    previousHeaderType = "";
                     // Ensure array entry exists (may be updated by bounds later)
                     arrays.putIfAbsent(currentHeader, new OdinSchema.SchemaArray(currentHeader,
                             new OdinSchema.SchemaFieldType.StringType(), null, null));
@@ -56,6 +83,11 @@ public final class SchemaParser {
                             typeName = typeName.substring(0, colonIdx).trim();
                         }
                         types.putIfAbsent(typeName, new OdinSchema.SchemaType(typeName, new ArrayList<>()));
+                        previousHeaderType = typeName;
+                        previousHeaderPath = "";
+                    } else {
+                        previousHeaderPath = headerContent;
+                        previousHeaderType = "";
                     }
                 }
                 continue;
@@ -74,6 +106,8 @@ public final class SchemaParser {
                     importPath = rest;
                     alias = rest;
                 }
+                importPath = stripQuotes(importPath);
+                alias = stripQuotes(alias);
                 imports.add(new OdinSchema.SchemaImport(importPath, alias));
                 continue;
             }
@@ -88,6 +122,9 @@ public final class SchemaParser {
                 currentHeader = line; // Use @TypeName as context for subsequent field lines
                 currentIsArray = false;
                 inMetadata = false;
+                previousHeaderType = typeName;
+                previousHeaderPath = "";
+                currentTypeSubPath = "";
                 continue;
             }
 
@@ -123,11 +160,12 @@ public final class SchemaParser {
 
                 // Strip array indicator from field names
                 String cleanFieldName = fieldName.endsWith("[]") ? fieldName.substring(0, fieldName.length() - 2) : fieldName;
-                var field = parseFieldSpec(cleanFieldName, valueSpec);
                 String headerPrefix = currentHeader != null ? currentHeader : "";
                 boolean isTypeDefinition = headerPrefix.startsWith("@") || headerPrefix.startsWith("{@");
                 if (isTypeDefinition) {
-                    // Add to type definition's fields list
+                    // Prefix the field key with the relative sub-path inside {.sub} sections.
+                    String typeFieldName = currentTypeSubPath.isEmpty() ? cleanFieldName : currentTypeSubPath + "." + cleanFieldName;
+                    var field = parseFieldSpec(typeFieldName, valueSpec);
                     String typeName = headerPrefix.startsWith("@") ? headerPrefix.substring(1) : headerPrefix;
                     var typeEntry = types.get(typeName);
                     if (typeEntry != null) {
@@ -135,6 +173,7 @@ public final class SchemaParser {
                     }
                     continue;
                 }
+                var field = parseFieldSpec(cleanFieldName, valueSpec);
                 String fullPath;
                 if (!headerPrefix.isEmpty()) {
                     fullPath = headerPrefix + "." + cleanFieldName;
@@ -515,5 +554,17 @@ public final class SchemaParser {
     private static String skipPastValue(String s) {
         int end = s.indexOf(' ');
         return end >= 0 ? s.substring(end) : "";
+    }
+
+    // Strip a single pair of matching surrounding quotes.
+    private static String stripQuotes(String s) {
+        if (s.length() >= 2) {
+            char first = s.charAt(0);
+            char last = s.charAt(s.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return s.substring(1, s.length() - 1);
+            }
+        }
+        return s;
     }
 }

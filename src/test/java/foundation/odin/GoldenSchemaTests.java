@@ -75,6 +75,8 @@ public class GoldenSchemaTests {
 
         if (expected == null) return;
 
+        boolean structural = test.has("structural") && test.get("structural").getAsBoolean();
+
         try {
             OdinSchema.SchemaDefinition schema = Odin.parseSchema(schemaText);
             assertNotNull(schema, "Schema parsed to null");
@@ -84,6 +86,17 @@ public class GoldenSchemaTests {
                 for (String typeName : expectedTypes.keySet()) {
                     var typeDef = schema.types().get(typeName);
                     assertNotNull(typeDef, "Expected type '" + typeName + "' not found in schema");
+                    if (structural) {
+                        JsonObject typeSpec = expectedTypes.getAsJsonObject(typeName);
+                        if (typeSpec.has("fields")) {
+                            var fieldNames = typeDef.fields().stream()
+                                    .map(OdinSchema.SchemaField::name).collect(Collectors.toSet());
+                            for (String key : typeSpec.getAsJsonObject("fields").keySet()) {
+                                assertTrue(fieldNames.contains(key),
+                                        "Expected type '" + typeName + "' to contain field '" + key + "', got " + fieldNames);
+                            }
+                        }
+                    }
                 }
             }
 

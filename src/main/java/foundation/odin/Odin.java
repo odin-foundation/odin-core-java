@@ -88,6 +88,29 @@ public final class Odin {
         return ValidationEngine.validate(doc, schema, options);
     }
 
+    public static OdinSchema.ValidationResult validate(OdinDocument doc, OdinSchema.SchemaDefinition schema,
+                                                        OdinOptions.ValidateOptions options,
+                                                        ImportResolver.TypeRegistry typeRegistry) {
+        return ValidationEngine.validate(doc, schema, options, typeRegistry);
+    }
+
+    public static OdinSchema.ValidationResult validateWithImports(OdinDocument doc,
+                                                                   OdinSchema.SchemaDefinition schema,
+                                                                   String basePath,
+                                                                   OdinOptions.ValidateOptions options) {
+        return validateWithImports(doc, schema, basePath, options, null);
+    }
+
+    public static OdinSchema.ValidationResult validateWithImports(OdinDocument doc,
+                                                                   OdinSchema.SchemaDefinition schema,
+                                                                   String basePath,
+                                                                   OdinOptions.ValidateOptions options,
+                                                                   ImportResolver.ResolverOptions resolverOptions) {
+        var resolver = new ImportResolver(resolverOptions != null ? resolverOptions : ImportResolver.ResolverOptions.forSchemas());
+        var resolved = resolver.resolveSchema(schema, basePath);
+        return ValidationEngine.validate(doc, schema, options, resolved.resolution().registry());
+    }
+
     // ── Schema ──
 
     public static OdinSchema.SchemaDefinition parseSchema(String schemaText) {
