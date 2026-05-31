@@ -4,6 +4,7 @@ import foundation.odin.types.DynValue;
 import foundation.odin.types.OdinModifiers;
 import foundation.odin.types.TargetConfig;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class XmlFormatter {
@@ -16,12 +17,19 @@ public final class XmlFormatter {
         // Read options
         boolean includeDeclaration = true;
         int indent = 2;
+        boolean emitTypeHints = true;
+        var namespaces = new LinkedHashMap<String, String>();
         if (config != null) {
             var declOpt = config.getOptions().get("declaration");
             if ("false".equals(declOpt)) includeDeclaration = false;
             var indentOpt = config.getOptions().get("indent");
             if (indentOpt != null) {
                 try { indent = Integer.parseInt(indentOpt); } catch (NumberFormatException ignored) {}
+            }
+            if ("false".equals(config.getOptions().get("emitTypeHints"))) emitTypeHints = false;
+            for (var opt : config.getOptions().entrySet()) {
+                if (opt.getKey().startsWith("namespace."))
+                    namespaces.put(opt.getKey().substring("namespace.".length()), opt.getValue());
             }
         }
 
@@ -37,11 +45,11 @@ public final class XmlFormatter {
                 var re = config.getOptions().get("rootElement");
                 if (re != null && !re.isEmpty()) rootEl = re;
             }
-            writeElement(sb, rootEl, value, indent, 0, modifiers, "", false);
+            writeElement(sb, rootEl, value, indent, 0, modifiers, "", false, emitTypeHints, namespaces);
             return sb.toString();
         }
 
-        boolean needsNamespace = hasTypedValues(value);
+        boolean needsNamespace = emitTypeHints && hasTypedValues(value);
 
         for (var entry : entries) {
             String key = entry.getKey();
@@ -51,14 +59,15 @@ public final class XmlFormatter {
                 var items = child.asArray();
                 if (items != null) {
                     for (var item : items) {
-                        writeArrayItemElement(sb, key, item, indent, 0, modifiers, key);
+                        writeArrayItemElement(sb, key, item, indent, 0, modifiers, key, emitTypeHints, namespaces);
                     }
                 }
             } else {
                 sb.append('<').append(key);
                 if (needsNamespace) sb.append(" xmlns:odin=\"https://odin.foundation/ns\"");
+                sb.append(buildNamespaceDeclarations(namespaces));
                 sb.append(">\n");
-                writeObjectChildren(sb, child, indent, 1, modifiers, key);
+                writeObjectChildren(sb, child, indent, 1, modifiers, key, emitTypeHints, namespaces);
                 sb.append("</").append(key).append(">\n");
             }
         }
@@ -70,8 +79,26 @@ public final class XmlFormatter {
         return formatWithModifiers(value, config, Map.of());
     }
 
+    // Build xmlns:<prefix> declarations for target namespaces in insertion order.
+    private static String buildNamespaceDeclarations(Map<String, String> namespaces) {
+        if (namespaces == null || namespaces.isEmpty()) return "";
+        var sb = new StringBuilder();
+        for (var entry : namespaces.entrySet()) {
+            sb.append(" xmlns:").append(entry.getKey()).append("=\"").append(xmlEscape(entry.getValue())).append('"');
+        }
+        return sb.toString();
+    }
+
+    // Qualify an element name with its namespace prefix when the mapping carries :ns.
+    private static String nsQualify(String tag, Map<String, OdinModifiers> modifiers, String modKey) {
+        var mods = modifiers.get(modKey);
+        if (mods != null && mods.getNs() != null) return mods.getNs() + ":" + tag;
+        return tag;
+    }
+
     private static void writeArrayItemElement(StringBuilder sb, String tag, DynValue item,
-            int indent, int depth, Map<String, OdinModifiers> modifiers, String pathPrefix) {
+            int indent, int depth, Map<String, OdinModifiers> modifiers, String pathPrefix,
+            boolean emitTypeHints, Map<String, String> namespaces) {
         var pad = pad(indent, depth);
 
         if (item.getType() == DynValue.Type.Object) {
@@ -100,60 +127,77 @@ public final class XmlFormatter {
 
             for (var entry : childFields) {
                 writeElement(sb, entry.getKey(), entry.getValue(), indent, depth + 1,
-                        modifiers, pathPrefix + "." + entry.getKey(), true);
+                        modifiers, pathPrefix + "." + entry.getKey(), true, emitTypeHints, namespaces);
             }
             sb.append(pad).append("</").append(tag).append(">\n");
         } else {
-            writeElement(sb, tag, item, indent, depth, modifiers, pathPrefix, true);
+            writeElement(sb, tag, item, indent, depth, modifiers, pathPrefix, true, emitTypeHints, namespaces);
         }
     }
 
     private static void writeObjectChildren(StringBuilder sb, DynValue value, int indent, int depth,
-            Map<String, OdinModifiers> modifiers, String pathPrefix) {
+            Map<String, OdinModifiers> modifiers, String pathPrefix,
+            boolean emitTypeHints, Map<String, String> namespaces) {
         var entries = value.asObject();
         if (entries == null) return;
         for (var entry : entries) {
             String childPath = pathPrefix + "." + entry.getKey();
-            writeElement(sb, entry.getKey(), entry.getValue(), indent, depth, modifiers, childPath, true);
+            writeElement(sb, entry.getKey(), entry.getValue(), indent, depth, modifiers, childPath, true,
+                    emitTypeHints, namespaces);
         }
     }
 
     private static void writeElement(StringBuilder sb, String tag, DynValue value, int indent, int depth,
-            Map<String, OdinModifiers> modifiers, String modKey, boolean includeTypeAttr) {
+            Map<String, OdinModifiers> modifiers, String modKey, boolean includeTypeAttr,
+            boolean emitTypeHints, Map<String, String> namespaces) {
         var pad = pad(indent, depth);
+        String elName = nsQualify(tag, modifiers, modKey);
 
         switch (value.getType()) {
-            case Null -> sb.append(pad).append('<').append(tag).append(" odin:type=\"null\"></").append(tag).append(">\n");
+            case Null -> {
+                sb.append(pad).append('<').append(elName);
+                if (emitTypeHints) sb.append(" odin:type=\"null\"");
+                sb.append("></").append(elName).append(">\n");
+            }
             case Array -> {
                 var items = value.asArray();
                 if (items != null) {
                     for (var item : items)
-                        writeArrayItemElement(sb, tag, item, indent, depth, modifiers, modKey);
+                        writeArrayItemElement(sb, tag, item, indent, depth, modifiers, modKey, emitTypeHints, namespaces);
                 }
             }
             case Object -> {
-                sb.append(pad).append('<').append(tag).append(">\n");
-                writeObjectChildren(sb, value, indent, depth + 1, modifiers, modKey);
-                sb.append(pad).append("</").append(tag).append(">\n");
+                sb.append(pad).append('<').append(elName).append(">\n");
+                writeObjectChildren(sb, value, indent, depth + 1, modifiers, modKey, emitTypeHints, namespaces);
+                sb.append(pad).append("</").append(elName).append(">\n");
             }
             default -> {
-                sb.append(pad).append('<').append(tag);
+                sb.append(pad).append('<').append(elName);
 
-                if (includeTypeAttr) {
-                    String typeAttr = getTypeAttribute(value);
-                    if (typeAttr != null) sb.append(" odin:type=\"").append(typeAttr).append('"');
-                }
+                if (emitTypeHints) {
+                    if (includeTypeAttr) {
+                        String typeAttr = getTypeAttribute(value);
+                        if (typeAttr != null) sb.append(" odin:type=\"").append(typeAttr).append('"');
+                        // Currency code only travels when present.
+                        if (value.getType() == DynValue.Type.Currency
+                                || value.getType() == DynValue.Type.CurrencyRaw) {
+                            String code = value.getCurrencyCode();
+                            if (code != null && !code.isEmpty())
+                                sb.append(" odin:currencyCode=\"").append(xmlEscape(code)).append('"');
+                        }
+                    }
 
-                if (modifiers.containsKey(modKey)) {
-                    var mods = modifiers.get(modKey);
-                    if (mods.isRequired()) sb.append(" odin:required=\"true\"");
-                    if (mods.isConfidential()) sb.append(" odin:confidential=\"true\"");
-                    if (mods.isDeprecated()) sb.append(" odin:deprecated=\"true\"");
+                    if (modifiers.containsKey(modKey)) {
+                        var mods = modifiers.get(modKey);
+                        if (mods.isRequired()) sb.append(" odin:required=\"true\"");
+                        if (mods.isConfidential()) sb.append(" odin:confidential=\"true\"");
+                        if (mods.isDeprecated()) sb.append(" odin:deprecated=\"true\"");
+                    }
                 }
 
                 sb.append('>');
                 sb.append(xmlEscape(scalarToString(value)));
-                sb.append("</").append(tag).append(">\n");
+                sb.append("</").append(elName).append(">\n");
             }
         }
     }
@@ -163,10 +207,8 @@ public final class XmlFormatter {
             case Bool -> "boolean";
             case Integer -> "integer";
             case Float -> "number";
-            case Currency, CurrencyRaw -> {
-                double d = value.asDouble() != null ? value.asDouble() : 0.0;
-                yield (d == Math.floor(d) && !Double.isInfinite(d)) ? "integer" : "number";
-            }
+            // Currency is first-class regardless of currency code.
+            case Currency, CurrencyRaw -> "currency";
             case Percent, FloatRaw -> "number";
             default -> null;
         };
@@ -194,8 +236,11 @@ public final class XmlFormatter {
             case Bool -> (value.asBool() != null && value.asBool()) ? "true" : "false";
             case Integer -> String.valueOf(value.asInt64());
             case Float, Percent -> formatFloat(value.asDouble() != null ? value.asDouble() : 0.0);
-            case Currency -> formatFloat(value.asDouble() != null ? value.asDouble() : 0.0);
-            case FloatRaw, CurrencyRaw -> value.asString() != null ? value.asString() : "0";
+            // Currency preserves decimal scale (default 2).
+            case Currency -> String.format("%." + value.getDecimalPlaces() + "f",
+                    value.asDouble() != null ? value.asDouble() : 0.0);
+            case CurrencyRaw -> value.asString() != null ? value.asString() : "0";
+            case FloatRaw -> value.asString() != null ? value.asString() : "0";
             case String, Reference, Binary, Date, Timestamp, Time, Duration ->
                     value.asString() != null ? value.asString() : "";
             default -> "";

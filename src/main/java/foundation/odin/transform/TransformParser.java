@@ -345,23 +345,27 @@ public final class TransformParser {
 
     private static OdinModifiers mergeDirectiveModifiers(OdinModifiers modifiers, List<OdinDirective> directives) {
         boolean hasConf = false, hasReq = false, hasDep = false, hasAttr = false;
+        String ns = null;
         for (var d : directives) {
             switch (d.getName()) {
                 case "confidential": hasConf = true; break;
                 case "required": hasReq = true; break;
                 case "deprecated": hasDep = true; break;
                 case "attr": hasAttr = true; break;
+                case "ns": if (d.getValue() != null) ns = d.getValue().asString(); break;
             }
         }
 
-        if (!hasConf && !hasReq && !hasDep && !hasAttr) return modifiers;
+        if (!hasConf && !hasReq && !hasDep && !hasAttr && ns == null) return modifiers;
 
         boolean mReq = modifiers != null && modifiers.isRequired();
         boolean mConf = modifiers != null && modifiers.isConfidential();
         boolean mDep = modifiers != null && modifiers.isDeprecated();
         boolean mAttr = modifiers != null && modifiers.isAttr();
+        String mNs = modifiers != null ? modifiers.getNs() : null;
 
-        return new OdinModifiers(mReq || hasReq, mConf || hasConf, mDep || hasDep, mAttr || hasAttr);
+        return new OdinModifiers(mReq || hasReq, mConf || hasConf, mDep || hasDep, mAttr || hasAttr,
+                ns != null ? ns : mNs);
     }
 
     // ── Segments ──
@@ -876,7 +880,7 @@ public final class TransformParser {
                  "decimals", "currencyCode",
                  "leftPad", "rightPad", "truncate", "default",
                  "upper", "lower",
-                 "required", "confidential", "deprecated", "attr" -> true;
+                 "required", "confidential", "deprecated", "attr", "ns" -> true;
             default -> false;
         };
 
@@ -886,7 +890,7 @@ public final class TransformParser {
 
         boolean needsValue = switch (name) {
             case "pos", "len", "field", "type", "decimals",
-                 "currencyCode", "leftPad", "rightPad", "default" -> true;
+                 "currencyCode", "leftPad", "rightPad", "default", "ns" -> true;
             default -> false;
         };
 
