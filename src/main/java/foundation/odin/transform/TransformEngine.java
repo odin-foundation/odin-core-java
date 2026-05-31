@@ -1021,8 +1021,91 @@ public final class TransformEngine {
     private static final java.util.regex.Pattern CONDITION_PATTERN =
             java.util.regex.Pattern.compile("^(@?[\\w.\\[\\]]+)\\s*(==|!=|<>|<=|>=|=|<|>)\\s*(.+)$");
 
-    // Evaluate a segment condition: comparison expression or path truthiness.
+    // Evaluate a segment condition with boolean operators: not > and > or.
     private static boolean evaluateCondition(String condition, ExecContext ctx) {
+        return evaluateOr(condition.trim(), ctx);
+    }
+
+    // OR has the lowest precedence.
+    private static boolean evaluateOr(String expr, ExecContext ctx) {
+        var terms = splitTopLevel(expr, "or");
+        if (terms.size() > 1) {
+            for (var t : terms) {
+                if (evaluateAnd(t, ctx)) return true;
+            }
+            return false;
+        }
+        return evaluateAnd(expr, ctx);
+    }
+
+    // AND binds tighter than OR.
+    private static boolean evaluateAnd(String expr, ExecContext ctx) {
+        var factors = splitTopLevel(expr, "and");
+        if (factors.size() > 1) {
+            for (var f : factors) {
+                if (!evaluateNot(f, ctx)) return false;
+            }
+            return true;
+        }
+        return evaluateNot(expr, ctx);
+    }
+
+    // NOT binds tightest; a leading `not` negates the primary that follows.
+    private static boolean evaluateNot(String expr, ExecContext ctx) {
+        var trimmed = expr.trim();
+        if (startsWithNot(trimmed)) {
+            return !evaluateNot(trimmed.substring(3).trim(), ctx);
+        }
+        return evaluatePrimary(trimmed, ctx);
+    }
+
+    // True when the expression begins with a whole-word `not` (case-insensitive).
+    private static boolean startsWithNot(String expr) {
+        return expr.length() > 3
+                && (expr.charAt(0) == 'n' || expr.charAt(0) == 'N')
+                && (expr.charAt(1) == 'o' || expr.charAt(1) == 'O')
+                && (expr.charAt(2) == 't' || expr.charAt(2) == 'T')
+                && Character.isWhitespace(expr.charAt(3));
+    }
+
+    // Split on a whole-word boolean operator at top level, ignoring quoted text.
+    private static java.util.List<String> splitTopLevel(String expr, String op) {
+        var parts = new ArrayList<String>();
+        int start = 0;
+        boolean inSingle = false, inDouble = false;
+        for (int i = 0; i < expr.length(); i++) {
+            char c = expr.charAt(i);
+            if (inSingle) {
+                if (c == '\'') inSingle = false;
+                continue;
+            }
+            if (inDouble) {
+                if (c == '"') inDouble = false;
+                continue;
+            }
+            if (c == '\'') { inSingle = true; continue; }
+            if (c == '"') { inDouble = true; continue; }
+            if (i == 0 || i + op.length() >= expr.length()) continue;
+            char before = expr.charAt(i - 1);
+            char after = expr.charAt(i + op.length());
+            if (Character.isWhitespace(before) && Character.isWhitespace(after)
+                    && expr.regionMatches(true, i, op, 0, op.length())) {
+                parts.add(expr.substring(start, i));
+                i += op.length() - 1;
+                start = i + 1;
+            }
+        }
+        parts.add(expr.substring(start));
+        var out = new ArrayList<String>();
+        for (var p : parts) {
+            var t = p.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    // A single comparison expression or a bare truthy path.
+    private static boolean evaluatePrimary(String condition, ExecContext ctx) {
         var trimmed = condition.trim();
         var matcher = CONDITION_PATTERN.matcher(trimmed);
         if (matcher.matches()) {
