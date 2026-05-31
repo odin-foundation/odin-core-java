@@ -45,13 +45,28 @@ public final class OdinSchema {
             boolean immutable,
             String description,
             List<SchemaConstraint> constraints,
-            String defaultValue,
-            List<SchemaConditional> conditionals
+            DefaultValue defaultValue,
+            List<SchemaConditional> conditionals,
+            boolean computed,
+            boolean nullable
     ) {
         public SchemaField(String name, SchemaFieldType fieldType) {
-            this(name, fieldType, false, false, false, false, null, List.of(), null, List.of());
+            this(name, fieldType, false, false, false, false, null, List.of(), null, List.of(), false, false);
+        }
+
+        // Backward-compatible constructor without computed/nullable flags.
+        public SchemaField(
+                String name, SchemaFieldType fieldType, boolean required, boolean confidential,
+                boolean deprecated, boolean immutable, String description,
+                List<SchemaConstraint> constraints, DefaultValue defaultValue,
+                List<SchemaConditional> conditionals) {
+            this(name, fieldType, required, confidential, deprecated, immutable, description,
+                    constraints, defaultValue, conditionals, false, false);
         }
     }
+
+    // Typed default value: type is the ODIN type kind, value the parsed literal.
+    public record DefaultValue(String type, Object value) {}
 
     // ── Schema Field Types ──
 

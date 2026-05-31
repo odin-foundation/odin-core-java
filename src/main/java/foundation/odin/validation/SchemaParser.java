@@ -137,6 +137,35 @@ public final class SchemaParser {
                 continue;
             }
 
+            // Type composition / intersection: = @a & @b
+            if (line.startsWith("=") && line.contains("@")) {
+                String rhs = line.substring(1).trim();
+                var refs = new ArrayList<String>();
+                for (String part : rhs.split("&")) {
+                    String p = part.trim();
+                    if (p.startsWith("@")) {
+                        int end = 1;
+                        while (end < p.length() && p.charAt(end) != ' ' && p.charAt(end) != ':') end++;
+                        refs.add(p.substring(1, end));
+                    }
+                }
+                if (!refs.isEmpty()) {
+                    String joined = String.join("&", refs);
+                    var compField = new OdinSchema.SchemaField("_composition",
+                            new OdinSchema.SchemaFieldType.TypeRefType(joined));
+                    String headerPrefix = currentHeader != null ? currentHeader : "";
+                    if (headerPrefix.startsWith("@")) {
+                        var typeEntry = types.get(headerPrefix.substring(1));
+                        if (typeEntry != null) typeEntry.fields().add(compField);
+                    } else if (currentIsArray) {
+                        // Array type inheritance: store under the array path's item fields (no-op model).
+                    } else if (!headerPrefix.isEmpty()) {
+                        fields.put(headerPrefix + "._composition", compField);
+                    }
+                }
+                continue;
+            }
+
             // Field assignment
             int eqPos = findAssignmentEquals(line);
             if (eqPos > 0) {
@@ -301,17 +330,23 @@ public final class SchemaParser {
         boolean confidential = false;
         boolean deprecated = false;
         boolean immutable = false;
+        boolean computed = false;
+        boolean nullable = false;
         OdinSchema.SchemaFieldType fieldType = new OdinSchema.SchemaFieldType.StringType();
         var constraints = new ArrayList<OdinSchema.SchemaConstraint>();
         var conditionals = new ArrayList<OdinSchema.SchemaConditional>();
 
         String s = spec;
 
-        // Handle ODIN native inline prefixes: !, -, *
+        // Handle ODIN native inline prefixes: !, -, *, ~ (nullable)
+        // A bare leading ~ marks the field nullable; ~ inside a union is handled later.
         while (!s.isEmpty()) {
             if (s.charAt(0) == '!') { required = true; s = s.substring(1).trim(); }
             else if (s.charAt(0) == '-') { deprecated = true; s = s.substring(1).trim(); }
             else if (s.charAt(0) == '*') { confidential = true; s = s.substring(1).trim(); }
+            else if (s.charAt(0) == '~' && s.length() > 1 && isTypePrefixChar(s.charAt(1))) {
+                nullable = true; s = s.substring(1).trim();
+            }
             else break;
         }
 
@@ -330,61 +365,29 @@ public final class SchemaParser {
                 s = s.substring(closeParen + 1).trim();
             }
         }
-        // Parse ODIN native type prefixes: ##, #$, #, ?, ^, ~, @TypeRef
-        else if (s.startsWith("##")) {
-            fieldType = new OdinSchema.SchemaFieldType.IntegerType();
-            s = s.substring(2).trim();
-        } else if (s.startsWith("#$")) {
-            fieldType = new OdinSchema.SchemaFieldType.CurrencyType(null);
-            s = s.substring(2).trim();
-        } else if (s.startsWith("#")) {
-            fieldType = new OdinSchema.SchemaFieldType.NumberType(null);
-            s = s.substring(1).trim();
-        } else if (s.startsWith("?")) {
-            fieldType = new OdinSchema.SchemaFieldType.BooleanType();
-            s = s.substring(1).trim();
-        } else if (s.startsWith("^")) {
-            fieldType = new OdinSchema.SchemaFieldType.BinaryType();
-            s = s.substring(1).trim();
-        } else if (s.startsWith("~")) {
-            fieldType = new OdinSchema.SchemaFieldType.NullType();
-            s = s.substring(1).trim();
-        } else if (s.startsWith("@") && !s.startsWith("@.")) {
-            int end = s.indexOf(' ');
-            String typeName = end >= 0 ? s.substring(1, end) : s.substring(1);
-            fieldType = new OdinSchema.SchemaFieldType.TypeRefType(typeName);
-            s = end >= 0 ? s.substring(end).trim() : "";
-        } else if (s.startsWith("string")) {
-            fieldType = new OdinSchema.SchemaFieldType.StringType();
-            s = s.substring(6).trim();
-        } else if (s.startsWith("integer")) {
-            fieldType = new OdinSchema.SchemaFieldType.IntegerType();
-            s = s.substring(7).trim();
-        } else if (s.startsWith("number")) {
-            fieldType = new OdinSchema.SchemaFieldType.NumberType(null);
-            s = s.substring(6).trim();
-        } else if (s.startsWith("boolean")) {
-            fieldType = new OdinSchema.SchemaFieldType.BooleanType();
-            s = s.substring(7).trim();
-        } else if (s.startsWith("date")) {
-            fieldType = new OdinSchema.SchemaFieldType.DateType();
-            s = s.substring(4).trim();
-        } else if (s.startsWith("timestamp")) {
-            fieldType = new OdinSchema.SchemaFieldType.TimestampType();
-            s = s.substring(9).trim();
-        } else if (s.startsWith("currency")) {
-            fieldType = new OdinSchema.SchemaFieldType.CurrencyType(null);
-            s = s.substring(8).trim();
-        } else if (s.startsWith("percent")) {
-            fieldType = new OdinSchema.SchemaFieldType.PercentType();
-            s = s.substring(7).trim();
-        } else if (s.startsWith("binary")) {
-            fieldType = new OdinSchema.SchemaFieldType.BinaryType();
-            s = s.substring(6).trim();
-        } else if (s.startsWith("null")) {
-            fieldType = new OdinSchema.SchemaFieldType.NullType();
-            s = s.substring(4).trim();
+        // Parse the (possibly union) type specification.
+        else {
+            var base = parseBaseType(s);
+            if (base != null) {
+                fieldType = base.type();
+                s = base.rest();
+                // Union members: type|type2[|type3...]
+                if (s.startsWith("|")) {
+                    var members = new ArrayList<OdinSchema.SchemaFieldType>();
+                    members.add(fieldType);
+                    while (s.startsWith("|")) {
+                        s = s.substring(1);
+                        var next = parseBaseType(s);
+                        if (next == null) break;
+                        members.add(next.type());
+                        s = next.rest();
+                    }
+                    fieldType = new OdinSchema.SchemaFieldType.UnionType(members);
+                }
+            }
         }
+
+        s = s.trim();
 
         // Parse inline constraints
         while (!s.isEmpty()) {
@@ -426,6 +429,9 @@ public final class SchemaParser {
             } else if (s.startsWith(":immutable")) {
                 immutable = true;
                 s = s.substring(10).trim();
+            } else if (s.startsWith(":computed")) {
+                computed = true;
+                s = s.substring(9).trim();
             } else if (s.startsWith(":unique")) {
                 constraints.add(new OdinSchema.SchemaConstraint.Unique());
                 s = s.substring(7).trim();
@@ -487,8 +493,109 @@ public final class SchemaParser {
             }
         }
 
+        OdinSchema.DefaultValue defaultValue = parseDefaultValue(fieldType, s.trim());
+
         return new OdinSchema.SchemaField(name, fieldType, required, confidential, deprecated,
-                immutable, null, constraints, null, conditionals);
+                immutable, null, constraints, defaultValue, conditionals, computed, nullable);
+    }
+
+    private static boolean isTypePrefixChar(char c) {
+        return c == '#' || c == '?' || c == '^' || Character.isLetter(c);
+    }
+
+    // Capture a typed default literal trailing the type/constraints (e.g. "##3", "5.00", "0.15").
+    private static OdinSchema.DefaultValue parseDefaultValue(
+            OdinSchema.SchemaFieldType fieldType, String raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        String t = raw.trim();
+        if (t.isEmpty()) return null;
+
+        if (t.startsWith("##")) {
+            try { return new OdinSchema.DefaultValue("integer", Long.parseLong(t.substring(2).trim())); }
+            catch (NumberFormatException e) { return null; }
+        }
+        if (t.startsWith("#%")) {
+            try { return new OdinSchema.DefaultValue("percent", Double.parseDouble(t.substring(2).trim())); }
+            catch (NumberFormatException e) { return null; }
+        }
+        if (t.startsWith("#$")) {
+            try { return new OdinSchema.DefaultValue("currency", Double.parseDouble(t.substring(2).trim())); }
+            catch (NumberFormatException e) { return null; }
+        }
+        if (t.startsWith("#")) {
+            try { return new OdinSchema.DefaultValue("number", Double.parseDouble(t.substring(1).trim())); }
+            catch (NumberFormatException e) { return null; }
+        }
+        if (t.equals("true") || t.equals("false")) {
+            return new OdinSchema.DefaultValue("boolean", Boolean.parseBoolean(t));
+        }
+        // Bare literal: tag by the declared field type (the prefix was consumed as the type).
+        try {
+            if (fieldType instanceof OdinSchema.SchemaFieldType.IntegerType) {
+                return new OdinSchema.DefaultValue("integer", Long.parseLong(t));
+            }
+            if (fieldType instanceof OdinSchema.SchemaFieldType.PercentType) {
+                return new OdinSchema.DefaultValue("percent", Double.parseDouble(t));
+            }
+            if (fieldType instanceof OdinSchema.SchemaFieldType.CurrencyType) {
+                return new OdinSchema.DefaultValue("currency", Double.parseDouble(t));
+            }
+            if (fieldType instanceof OdinSchema.SchemaFieldType.NumberType) {
+                return new OdinSchema.DefaultValue("number", Double.parseDouble(t));
+            }
+        } catch (NumberFormatException ignored) {}
+        return new OdinSchema.DefaultValue("string", stripQuotes(t));
+    }
+
+    // A parsed base type plus the unconsumed remainder of the spec.
+    private record TypeParse(OdinSchema.SchemaFieldType type, String rest) {}
+
+    // Parse a single (non-union) base type from the start of a spec fragment.
+    private static TypeParse parseBaseType(String s) {
+        if (s.startsWith("##")) return new TypeParse(new OdinSchema.SchemaFieldType.IntegerType(), s.substring(2));
+        if (s.startsWith("#%")) return new TypeParse(new OdinSchema.SchemaFieldType.PercentType(), s.substring(2));
+        if (s.startsWith("#$")) return new TypeParse(new OdinSchema.SchemaFieldType.CurrencyType(null), s.substring(2));
+        if (s.startsWith("#")) return new TypeParse(new OdinSchema.SchemaFieldType.NumberType(null), s.substring(1));
+        if (s.startsWith("?")) return new TypeParse(new OdinSchema.SchemaFieldType.BooleanType(), s.substring(1));
+        if (s.startsWith("^")) return new TypeParse(new OdinSchema.SchemaFieldType.BinaryType(), s.substring(1));
+        if (s.startsWith("~")) return new TypeParse(new OdinSchema.SchemaFieldType.NullType(), s.substring(1));
+        if (s.startsWith("@") && !s.startsWith("@.")) {
+            // Read the reference name up to whitespace, '|', ':' or end.
+            int i = 1;
+            while (i < s.length() && s.charAt(i) != ' ' && s.charAt(i) != '|' && s.charAt(i) != ':') i++;
+            String typeName = s.substring(1, i);
+            return new TypeParse(new OdinSchema.SchemaFieldType.TypeRefType(typeName), s.substring(i));
+        }
+        // Named temporal/scalar keywords (a glued :directive suffix is left for the constraint loop).
+        String[][] named = {
+                {"timestamp", "timestamp"}, {"duration", "duration"}, {"datetime", "timestamp"},
+                {"date", "date"}, {"time", "time"}, {"string", "string"}, {"integer", "integer"},
+                {"number", "number"}, {"boolean", "boolean"}, {"currency", "currency"},
+                {"percent", "percent"}, {"binary", "binary"}, {"null", "null"}
+        };
+        for (String[] kw : named) {
+            if (s.startsWith(kw[0])) {
+                return new TypeParse(namedType(kw[1]), s.substring(kw[0].length()));
+            }
+        }
+        return null;
+    }
+
+    private static OdinSchema.SchemaFieldType namedType(String kind) {
+        return switch (kind) {
+            case "timestamp" -> new OdinSchema.SchemaFieldType.TimestampType();
+            case "date" -> new OdinSchema.SchemaFieldType.DateType();
+            case "time" -> new OdinSchema.SchemaFieldType.TimeType();
+            case "duration" -> new OdinSchema.SchemaFieldType.DurationType();
+            case "integer" -> new OdinSchema.SchemaFieldType.IntegerType();
+            case "number" -> new OdinSchema.SchemaFieldType.NumberType(null);
+            case "boolean" -> new OdinSchema.SchemaFieldType.BooleanType();
+            case "currency" -> new OdinSchema.SchemaFieldType.CurrencyType(null);
+            case "percent" -> new OdinSchema.SchemaFieldType.PercentType();
+            case "binary" -> new OdinSchema.SchemaFieldType.BinaryType();
+            case "null" -> new OdinSchema.SchemaFieldType.NullType();
+            default -> new OdinSchema.SchemaFieldType.StringType();
+        };
     }
 
     private static void parseConditional(String condStr,

@@ -21,13 +21,16 @@ public final class ValidationEngine {
         var opts = options != null ? options : OdinOptions.ValidateOptions.DEFAULT;
         var errors = new ArrayList<OdinSchema.ValidationError>();
 
+        // Expand type compositions and field-level typeRefs into concrete fields.
+        var expandedFields = expandFields(doc, schema, registry);
+
         // Validate fields
-        for (var fieldEntry : schema.fields().entrySet()) {
+        for (var fieldEntry : expandedFields.entrySet()) {
             String path = fieldEntry.getKey();
             var schemaField = fieldEntry.getValue();
 
-            // Skip type definition fields (from @TypeName sections)
-            if (path.startsWith("@")) continue;
+            // Skip type definition / composition markers
+            if (path.startsWith("@") || path.endsWith("._composition")) continue;
 
             OdinValue docValue = doc.getAssignments().tryGet(path);
 
@@ -115,6 +118,18 @@ public final class ValidationEngine {
     // ── Type Matching ──
 
     private static boolean checkTypeMatch(OdinValue value, OdinSchema.SchemaFieldType expectedType) {
+        // A union accepts a value matching any of its members.
+        if (expectedType instanceof OdinSchema.SchemaFieldType.UnionType union) {
+            if (value instanceof OdinValue.OdinNull) {
+                return union.types().stream()
+                        .anyMatch(t -> t instanceof OdinSchema.SchemaFieldType.NullType);
+            }
+            for (var member : union.types()) {
+                if (checkTypeMatch(value, member)) return true;
+            }
+            return false;
+        }
+
         if (value instanceof OdinValue.OdinNull) return true;
 
         // String type also accepts date/timestamp when format constraint is used
@@ -170,6 +185,11 @@ public final class ValidationEngine {
 
     private static OdinSchema.ValidationError validateBounds(
             OdinValue value, OdinSchema.SchemaConstraint.Bounds bounds, String path) {
+        // Temporal bounds: compare chronologically against ISO literals.
+        if (value instanceof OdinValue.OdinDate || value instanceof OdinValue.OdinTimestamp) {
+            return validateTemporalBounds(value, bounds, path);
+        }
+
         Double numValue = null;
 
         if (value instanceof OdinValue.OdinInteger i) numValue = (double) i.getValue();
@@ -203,6 +223,53 @@ public final class ValidationEngine {
         }
 
         return null;
+    }
+
+    private static OdinSchema.ValidationError validateTemporalBounds(
+            OdinValue value, OdinSchema.SchemaConstraint.Bounds bounds, String path) {
+        Long actual = temporalToEpochMs(value);
+        if (actual == null) return null;
+
+        if (bounds.min() != null) {
+            Long min = temporalToEpochMs(bounds.min());
+            if (min != null && actual < min) {
+                return new OdinSchema.ValidationError(path, "V003",
+                        "Date below minimum at " + path + ": " + bounds.min());
+            }
+        }
+        if (bounds.max() != null) {
+            Long max = temporalToEpochMs(bounds.max());
+            if (max != null && actual > max) {
+                return new OdinSchema.ValidationError(path, "V003",
+                        "Date above maximum at " + path + ": " + bounds.max());
+            }
+        }
+        return null;
+    }
+
+    private static Long temporalToEpochMs(OdinValue value) {
+        if (value instanceof OdinValue.OdinTimestamp ts) return ts.getEpochMs();
+        if (value instanceof OdinValue.OdinDate d) return temporalToEpochMs(d.getRaw());
+        return null;
+    }
+
+    // Parse an ISO date/timestamp literal to epoch milliseconds for chronological compare.
+    private static Long temporalToEpochMs(String iso) {
+        if (iso == null) return null;
+        String s = iso.trim();
+        try {
+            if (s.length() == 10) { // yyyy-MM-dd
+                return java.time.LocalDate.parse(s)
+                        .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+            }
+            return java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli();
+        } catch (RuntimeException e) {
+            try {
+                return java.time.Instant.parse(s).toEpochMilli();
+            } catch (RuntimeException e2) {
+                return null;
+            }
+        }
     }
 
     private static OdinSchema.ValidationError validatePattern(
@@ -328,6 +395,9 @@ public final class ValidationEngine {
     private static boolean evaluateInvariant(OdinDocument doc, String expression, String objPath) {
         String expr = expression.trim();
 
+        // A present-but-null operand makes the invariant false.
+        if (hasNullOperand(doc, expr, objPath)) return false;
+
         // Try operators in order of precedence (multi-char first)
         String[][] ops = {{">=", ">="}, {"<=", "<="}, {"!=", "!="}, {">", ">"}, {"<", "<"}, {" = ", "="}};
         for (String[] opDef : ops) {
@@ -355,6 +425,21 @@ public final class ValidationEngine {
             }
         }
         return true;
+    }
+
+    private static final Set<String> INVARIANT_KEYWORDS = Set.of("true", "false");
+
+    // Any field operand referenced by the expression that is present with a null value.
+    private static boolean hasNullOperand(OdinDocument doc, String expr, String objPath) {
+        var matcher = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*").matcher(expr);
+        while (matcher.find()) {
+            String token = matcher.group();
+            if (INVARIANT_KEYWORDS.contains(token)) continue;
+            String fullPath = objPath.isEmpty() ? token : objPath + "." + token;
+            OdinValue v = doc.getAssignments().tryGet(fullPath);
+            if (v instanceof OdinValue.OdinNull) return true;
+        }
+        return false;
     }
 
     private static double resolveInvariantValue(OdinDocument doc, String expr, String objPath) {
@@ -522,6 +607,85 @@ public final class ValidationEngine {
 
     // ── Schema Reference Validation ──
 
+    // Build the effective field map: schema fields plus fields contributed by
+    // type compositions (= @a & @b) and field-level typeRefs (billing = @address).
+    private static Map<String, OdinSchema.SchemaField> expandFields(
+            OdinDocument doc, OdinSchema.SchemaDefinition schema, TypeRegistry registry) {
+        var result = new LinkedHashMap<String, OdinSchema.SchemaField>();
+
+        // Pass 1: object-level compositions (parent._composition = @a & @b).
+        for (var entry : schema.fields().entrySet()) {
+            String path = entry.getKey();
+            var field = entry.getValue();
+            if (path.endsWith("._composition")
+                    && field.fieldType() instanceof OdinSchema.SchemaFieldType.TypeRefType ref) {
+                String parent = path.substring(0, path.length() - "._composition".length());
+                for (String member : ref.name().split("&")) {
+                    var type = lookupType(schema, registry, member.trim());
+                    if (type != null) mergeTypeFields(result, parent, type);
+                }
+            }
+        }
+
+        // Pass 2: explicit schema fields (override inherited).
+        for (var entry : schema.fields().entrySet()) {
+            if (entry.getKey().endsWith("._composition")) continue;
+            result.put(entry.getKey(), entry.getValue());
+        }
+
+        // Pass 3: field-level typeRefs enforce the referenced type's fields under the field path,
+        // when the sub-object is present or the field is required.
+        for (var entry : new ArrayList<>(result.entrySet())) {
+            String path = entry.getKey();
+            var field = entry.getValue();
+            if (!(field.fieldType() instanceof OdinSchema.SchemaFieldType.TypeRefType ref)) continue;
+
+            var types = new ArrayList<OdinSchema.SchemaType>();
+            for (String member : ref.name().split("&")) {
+                var t = lookupType(schema, registry, member.trim());
+                if (t != null) types.add(t);
+            }
+            if (types.isEmpty()) continue; // runtime reference, not a defined type
+
+            if (!isObjectPresent(doc, path) && !field.required()) continue;
+
+            for (var type : types) {
+                for (var typeField : type.fields()) {
+                    if ("_composition".equals(typeField.name())) continue;
+                    String fullPath = path + "." + typeField.name();
+                    result.putIfAbsent(fullPath, renamed(typeField, fullPath));
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static void mergeTypeFields(Map<String, OdinSchema.SchemaField> result,
+            String parent, OdinSchema.SchemaType type) {
+        for (var typeField : type.fields()) {
+            if ("_composition".equals(typeField.name())) continue;
+            String fullPath = parent + "." + typeField.name();
+            result.put(fullPath, renamed(typeField, fullPath));
+        }
+    }
+
+    private static OdinSchema.SchemaField renamed(OdinSchema.SchemaField f, String path) {
+        return new OdinSchema.SchemaField(path, f.fieldType(), f.required(), f.confidential(),
+                f.deprecated(), f.immutable(), f.description(), f.constraints(),
+                f.defaultValue(), f.conditionals(), f.computed(), f.nullable());
+    }
+
+    // An object at path is present when the path or any descendant holds a value.
+    private static boolean isObjectPresent(OdinDocument doc, String path) {
+        if (doc.getAssignments().tryGet(path) != null) return true;
+        String prefix = path + ".";
+        for (var key : doc.getAssignments().keys()) {
+            if (key.startsWith(prefix)) return true;
+        }
+        return false;
+    }
+
     // Resolve a type name via the import registry first, then local schema types.
     private static OdinSchema.SchemaType lookupType(OdinSchema.SchemaDefinition schema,
             TypeRegistry registry, String name) {
@@ -543,12 +707,16 @@ public final class ValidationEngine {
             }
         }
 
-        // V013: Check unresolved type references (registry resolves @alias.typename)
+        // V013: Check unresolved type references (registry resolves @alias.typename).
+        // An intersection typeRef carries multiple &-joined member names.
         for (var entry : typeRefFields.entrySet()) {
-            String refTarget = entry.getValue();
-            if (lookupType(schema, registry, refTarget) == null) {
-                errors.add(new OdinSchema.ValidationError(entry.getKey(), "V013",
-                        "Unresolved type reference: @" + refTarget));
+            for (String member : entry.getValue().split("&")) {
+                String refTarget = member.trim();
+                if (refTarget.isEmpty()) continue;
+                if (lookupType(schema, registry, refTarget) == null) {
+                    errors.add(new OdinSchema.ValidationError(entry.getKey(), "V013",
+                            "Unresolved type reference: @" + refTarget));
+                }
             }
         }
 
