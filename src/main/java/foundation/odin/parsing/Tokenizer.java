@@ -178,6 +178,9 @@ public final class Tokenizer {
             case '&':
                 return scanExtensionPath(state);
 
+            case '$':
+                return scanMetaPath(state);
+
             default:
                 if (ch >= '0' && ch <= '9') {
                     if (looksLikeDate(state))
@@ -440,6 +443,28 @@ public final class Tokenizer {
         }
 
         return state.makeToken(TokenType.Path, start, startLine, startCol, identValue);
+    }
+
+    // Top-level metadata path: $.foo.bar (canonical-form output, e.g. $.id = "a").
+    private static Token scanMetaPath(State state) {
+        int start = state.pos;
+        int startLine = state.line;
+        int startCol = state.column;
+        state.advance(); // skip '$'
+
+        while (!state.isAtEnd()) {
+            char c = state.peek();
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '_' || c == '.' ||
+                c == '[' || c == ']') {
+                state.advance();
+            } else {
+                break;
+            }
+        }
+
+        String value = state.source.substring(start, state.pos);
+        return state.makeToken(TokenType.Path, start, startLine, startCol, value);
     }
 
     private static Token scanExtensionPath(State state) {

@@ -91,6 +91,43 @@ public class GoldenParseTests {
         OdinDocument doc = OdinParser.parse(input, ParseOptions.DEFAULT);
         assertNotNull(doc, "Parsed document is null");
 
+        if (expected.has("documents")) {
+            JsonArray expDocs = expected.getAsJsonArray("documents");
+            List<OdinDocument> docs = OdinParser.parseMulti(input, ParseOptions.DEFAULT);
+            assertEquals(expDocs.size(), docs.size(), "Document chain length mismatch");
+
+            for (int i = 0; i < expDocs.size(); i++) {
+                JsonObject expDoc = expDocs.get(i).getAsJsonObject();
+                OdinDocument d = docs.get(i);
+
+                if (expDoc.has("metadata")) {
+                    JsonObject meta = expDoc.getAsJsonObject("metadata");
+                    for (String key : meta.keySet()) {
+                        OdinValue actual = d.get("$." + key);
+                        assertNotNull(actual, "Expected metadata key '" + key + "' in document " + i);
+                        // metadata values are raw primitives; compare against the source/raw form
+                        assertEquals(meta.get(key).getAsString(), metaString(actual),
+                                "Metadata mismatch at '" + key + "' in document " + i);
+                    }
+                }
+
+                if (expDoc.has("assignments")) {
+                    JsonObject assignments = expDoc.getAsJsonObject("assignments");
+                    for (String path : assignments.keySet()) {
+                        JsonObject expectedVal = assignments.getAsJsonObject(path);
+                        OdinValue actual = d.get(path);
+                        assertNotNull(actual, "Expected path '" + path + "' in document " + i);
+                        if (expectedVal.has("type")) {
+                            assertTypeMatch(actual, expectedVal.get("type").getAsString(), path);
+                        }
+                        if (expectedVal.has("value")) {
+                            assertValueMatch(actual, expectedVal, path);
+                        }
+                    }
+                }
+            }
+        }
+
         if (expected.has("assignments")) {
             JsonObject assignments = expected.getAsJsonObject("assignments");
             for (String path : assignments.keySet()) {
@@ -116,6 +153,25 @@ public class GoldenParseTests {
                 assertNotNull(metaVal, "Expected metadata key '" + key + "' not found");
             }
         }
+    }
+
+    // Comparable source/raw string for a metadata value (dates by raw YYYY-MM-DD).
+    private static String metaString(OdinValue v) {
+        return switch (v) {
+            case OdinValue.OdinString s -> s.getValue();
+            case OdinValue.OdinBoolean b -> Boolean.toString(b.getValue());
+            case OdinValue.OdinInteger i -> i.getRaw() != null ? i.getRaw() : Long.toString(i.getValue());
+            case OdinValue.OdinNumber n -> n.getRaw() != null ? n.getRaw() : Double.toString(n.getValue());
+            case OdinValue.OdinCurrency c -> c.getRaw() != null ? c.getRaw() : Double.toString(c.getValue());
+            case OdinValue.OdinPercent p -> p.getRaw() != null ? p.getRaw() : Double.toString(p.getValue());
+            case OdinValue.OdinDate d -> d.getRaw();
+            case OdinValue.OdinTimestamp t -> t.getRaw();
+            case OdinValue.OdinTime t -> t.getValue();
+            case OdinValue.OdinDuration d -> d.getValue();
+            case OdinValue.OdinReference r -> "@" + r.getPath();
+            case OdinValue.OdinNull n -> "~";
+            default -> v.toString();
+        };
     }
 
     private void assertTypeMatch(OdinValue actual, String expectedType, String path) {
@@ -179,19 +235,37 @@ public class GoldenParseTests {
         }
 
         if (expectedVal.has("modifiers")) {
-            JsonObject mods = expectedVal.getAsJsonObject("modifiers");
+            JsonElement modsEl = expectedVal.get("modifiers");
             var actualMods = actual.getModifiers();
-            if (mods.has("required") && mods.get("required").getAsBoolean()) {
-                assertNotNull(actualMods, "Expected required modifier at '" + path + "'");
-                assertTrue(actualMods.isRequired(), "Expected required modifier at '" + path + "'");
-            }
-            if (mods.has("confidential") && mods.get("confidential").getAsBoolean()) {
-                assertNotNull(actualMods, "Expected confidential modifier at '" + path + "'");
-                assertTrue(actualMods.isConfidential(), "Expected confidential modifier at '" + path + "'");
-            }
-            if (mods.has("deprecated") && mods.get("deprecated").getAsBoolean()) {
-                assertNotNull(actualMods, "Expected deprecated modifier at '" + path + "'");
-                assertTrue(actualMods.isDeprecated(), "Expected deprecated modifier at '" + path + "'");
+            if (modsEl.isJsonArray()) {
+                // List form, e.g. ["confidential", "required"]
+                for (JsonElement m : modsEl.getAsJsonArray()) {
+                    String name = m.getAsString();
+                    assertNotNull(actualMods, "Expected modifier '" + name + "' at '" + path + "'");
+                    switch (name) {
+                        case "required", "critical" ->
+                            assertTrue(actualMods.isRequired(), "Expected required modifier at '" + path + "'");
+                        case "confidential", "redacted" ->
+                            assertTrue(actualMods.isConfidential(), "Expected confidential modifier at '" + path + "'");
+                        case "deprecated" ->
+                            assertTrue(actualMods.isDeprecated(), "Expected deprecated modifier at '" + path + "'");
+                        default -> { /* unknown modifier name, ignore */ }
+                    }
+                }
+            } else {
+                JsonObject mods = modsEl.getAsJsonObject();
+                if (mods.has("required") && mods.get("required").getAsBoolean()) {
+                    assertNotNull(actualMods, "Expected required modifier at '" + path + "'");
+                    assertTrue(actualMods.isRequired(), "Expected required modifier at '" + path + "'");
+                }
+                if (mods.has("confidential") && mods.get("confidential").getAsBoolean()) {
+                    assertNotNull(actualMods, "Expected confidential modifier at '" + path + "'");
+                    assertTrue(actualMods.isConfidential(), "Expected confidential modifier at '" + path + "'");
+                }
+                if (mods.has("deprecated") && mods.get("deprecated").getAsBoolean()) {
+                    assertNotNull(actualMods, "Expected deprecated modifier at '" + path + "'");
+                    assertTrue(actualMods.isDeprecated(), "Expected deprecated modifier at '" + path + "'");
+                }
             }
         }
     }

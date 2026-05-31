@@ -384,6 +384,13 @@ public final class OdinParser {
         int pathCol = state.current().getColumn();
         state.advance();
 
+        // Top-level metadata assignment ($.path = value), e.g. canonical-form output.
+        if (pathValue.startsWith("$.")) {
+            inMetadata = true;
+            pathValue = pathValue.substring(2);
+            state.currentHeader = null;
+        }
+
         // Build full path with current header
         String fullPath;
         if (state.currentHeader != null) {

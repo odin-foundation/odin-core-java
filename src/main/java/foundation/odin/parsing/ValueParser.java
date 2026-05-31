@@ -188,7 +188,18 @@ public final class ValueParser {
         try {
             value = Long.parseLong(raw);
         } catch (NumberFormatException e) {
-            value = 0; // For very large integers, store 0 but preserve raw
+            // Reject non-integral decimals (##4.2); allow exponent form (##1e3) and large integers.
+            double parsed;
+            try {
+                parsed = Double.parseDouble(raw);
+            } catch (NumberFormatException e2) {
+                throw new OdinParseException(ParseErrorCode.InvalidTypePrefix, line, col, "invalid integer: " + raw);
+            }
+            if (parsed != Math.floor(parsed) || Double.isInfinite(parsed)) {
+                throw new OdinParseException(ParseErrorCode.InvalidTypePrefix, line, col,
+                        "Integer (##) value cannot have a fractional part: " + raw);
+            }
+            value = (long) parsed; // exponent/large form: store truncated, preserve raw
         }
 
         return OdinValue.ofInteger(value, raw);
