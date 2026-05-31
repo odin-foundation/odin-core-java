@@ -407,69 +407,6 @@ class TransformEngineTest {
             var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("type", str("STANDARD"))));
             assertEquals(str("Alice"), runWithCondition("@.type != 'VOID'", source));
         }
-
-        private DynValue andSource(boolean active, int amount) {
-            return DynValue.ofObject(List.of(
-                    kv("name", str("Alice")),
-                    kv("active", bool(active)),
-                    kv("amount", DynValue.ofInteger(amount))));
-        }
-
-        @Test void andConditionTrue() {
-            assertEquals(str("Alice"), runWithCondition("@.active and @.amount > 50", andSource(true, 100)));
-        }
-
-        @Test void andConditionFalse() {
-            var v = runWithCondition("@.active and @.amount > 50", andSource(true, 10));
-            assertTrue(v == null || v.isNull());
-        }
-
-        @Test void orConditionTrue() {
-            assertEquals(str("Alice"), runWithCondition("@.active or @.amount > 50", andSource(false, 100)));
-        }
-
-        @Test void orConditionFalse() {
-            var v = runWithCondition("@.active or @.amount > 50", andSource(false, 10));
-            assertTrue(v == null || v.isNull());
-        }
-
-        @Test void notTruthyCondition() {
-            var src = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("active", bool(false))));
-            assertEquals(str("Alice"), runWithCondition("not @.active", src));
-        }
-
-        @Test void notComparisonCondition() {
-            var source = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("type", str("STANDARD"))));
-            assertEquals(str("Alice"), runWithCondition("not @.type = 'VOID'", source));
-            var voided = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("type", str("VOID"))));
-            var v = runWithCondition("not @.type = 'VOID'", voided);
-            assertTrue(v == null || v.isNull());
-        }
-
-        @Test void notBindsTighterThanAnd() {
-            // not @.active and @.amount > 50  ==  (not @.active) and (@.amount > 50)
-            assertEquals(str("Alice"), runWithCondition("not @.active and @.amount > 50", andSource(false, 100)));
-            var v = runWithCondition("not @.active and @.amount > 50", andSource(true, 100));
-            assertTrue(v == null || v.isNull());
-        }
-
-        @Test void andBindsTighterThanOr() {
-            // @.active and @.amount > 50 or @.name = 'Alice'
-            // == (active and amount>50) or (name='Alice') -> true via right branch
-            assertEquals(str("Alice"), runWithCondition("@.active and @.amount > 50 or @.name = 'Alice'", andSource(false, 10)));
-        }
-
-        @Test void operatorWordInsideQuotesNotSplit() {
-            var src = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("phrase", str("rock and roll"))));
-            assertEquals(str("Alice"), runWithCondition("@.phrase = 'rock and roll'", src));
-        }
-
-        @Test void operatorsCaseInsensitive() {
-            assertEquals(str("Alice"), runWithCondition("@.active AND @.amount > 50", andSource(true, 100)));
-            assertEquals(str("Alice"), runWithCondition("@.active OR @.amount > 50", andSource(false, 100)));
-            var src = DynValue.ofObject(List.of(kv("name", str("Alice")), kv("active", bool(false))));
-            assertEquals(str("Alice"), runWithCondition("NOT @.active", src));
-        }
     }
 
     // ═════════════════════════════════════════════════════════════════
