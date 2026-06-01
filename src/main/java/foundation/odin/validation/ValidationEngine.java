@@ -4,11 +4,65 @@ import foundation.odin.resolver.ImportResolver.TypeRegistry;
 import foundation.odin.types.*;
 
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 public final class ValidationEngine {
 
     private ValidationEngine() {}
+
+    // ── Schema-only memo ──
+
+    // Schema-only results that do not depend on any document: V017 schema-definition
+    // errors, V012/V013 type-reference errors, the composition-expanded base field map,
+    // and the registry under which they were computed (verified on cache hit).
+    private record SchemaMemo(
+            TypeRegistry registry,
+            List<OdinSchema.ValidationError> schemaErrors,
+            Map<String, OdinSchema.SchemaField> baseFields) {}
+
+    // Keyed by schema identity; entries are reused across documents validated against
+    // the same schema and registry.
+    private static final Map<OdinSchema.SchemaDefinition, SchemaMemo> SCHEMA_MEMO =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    private static SchemaMemo getSchemaMemo(OdinSchema.SchemaDefinition schema, TypeRegistry registry) {
+        var cached = SCHEMA_MEMO.get(schema);
+        if (cached != null && cached.registry() == registry) return cached;
+
+        var schemaErrors = new ArrayList<OdinSchema.ValidationError>();
+        SchemaDefinitionValidator.validate(schema, registry, schemaErrors);
+        validateSchemaReferences(schema, registry, schemaErrors);
+        var baseFields = expandBaseFields(schema, registry);
+
+        var memo = new SchemaMemo(registry, schemaErrors, baseFields);
+        SCHEMA_MEMO.put(schema, memo);
+        return memo;
+    }
+
+    // ── Compiled pattern cache ──
+
+    // A pattern string compiled once: SAFE carries a precompiled Pattern; UNSAFE marks a
+    // pattern rejected by the ReDoS analysis; INVALID marks a pattern that fails to compile.
+    private sealed interface CompiledPattern
+            permits SafePattern, UnsafePattern, InvalidPattern {}
+    private record SafePattern(Pattern pattern) implements CompiledPattern {}
+    private record UnsafePattern(String reason) implements CompiledPattern {}
+    private record InvalidPattern(String message) implements CompiledPattern {}
+
+    private static final Map<String, CompiledPattern> PATTERN_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static CompiledPattern getCompiledPattern(String pattern) {
+        return PATTERN_CACHE.computeIfAbsent(pattern, p -> {
+            var analysis = ReDoSProtection.analyze(p);
+            if (!analysis.safe()) return new UnsafePattern(analysis.reason());
+            try {
+                return new SafePattern(Pattern.compile(p));
+            } catch (PatternSyntaxException e) {
+                return new InvalidPattern(e.getMessage());
+            }
+        });
+    }
 
     public static OdinSchema.ValidationResult validate(
             OdinDocument doc, OdinSchema.SchemaDefinition schema, OdinOptions.ValidateOptions options) {
@@ -21,14 +75,21 @@ public final class ValidationEngine {
         var opts = options != null ? options : OdinOptions.ValidateOptions.DEFAULT;
         var errors = new ArrayList<OdinSchema.ValidationError>();
 
-        // Validate the schema definition itself (override, intersection, tabular, defaults).
-        SchemaDefinitionValidator.validate(schema, registry, errors);
+        // Schema-only results (V017 definition + V012/V013 references + base field map)
+        // are computed once per schema and reused across documents.
+        var memo = getSchemaMemo(schema, registry);
+
+        // Append copies of the cached schema-level errors (callers may mutate results).
+        for (var error : memo.schemaErrors()) {
+            errors.add(new OdinSchema.ValidationError(error.path(), error.code(), error.message(),
+                    error.expected(), error.actual(), error.schemaPath()));
+        }
         if (opts.isFailFast() && !errors.isEmpty()) {
             return new OdinSchema.ValidationResult(false, errors);
         }
 
-        // Expand type compositions and field-level typeRefs into concrete fields.
-        var expandedFields = expandFields(doc, schema, registry);
+        // Augment cached schema fields with document-dependent field-level typeRef compositions.
+        var expandedFields = augmentWithPresentCompositions(doc, schema, registry, memo.baseFields());
 
         // Validate fields
         for (var fieldEntry : expandedFields.entrySet()) {
@@ -137,9 +198,6 @@ public final class ValidationEngine {
         if (opts.isValidateReferences()) {
             validateReferences(doc, errors);
         }
-
-        // Schema-level reference validation
-        validateSchemaReferences(schema, registry, errors);
 
         // Strict mode (V011)
         if (opts.isStrict()) {
@@ -334,20 +392,21 @@ public final class ValidationEngine {
         String strValue = value.asString();
         if (strValue == null) return null;
 
-        var analysis = ReDoSProtection.analyze(pattern.pattern());
-        if (!analysis.safe()) {
+        // ReDoS analysis and compilation run once per distinct pattern string.
+        var compiled = getCompiledPattern(pattern.pattern());
+
+        if (compiled instanceof UnsafePattern unsafe) {
             return new OdinSchema.ValidationError(path, "V004",
-                    "Unsafe regex pattern at " + path + ": " + analysis.reason());
+                    "Unsafe regex pattern at " + path + ": " + unsafe.reason());
+        }
+        if (compiled instanceof InvalidPattern invalid) {
+            return new OdinSchema.ValidationError(path, "V004",
+                    "Invalid pattern at " + path + ": " + invalid.message());
         }
 
-        try {
-            var compiled = java.util.regex.Pattern.compile(pattern.pattern());
-            if (!compiled.matcher(strValue).matches()) {
-                return new OdinSchema.ValidationError(path, "V004", "Pattern mismatch at " + path);
-            }
-        } catch (PatternSyntaxException e) {
-            return new OdinSchema.ValidationError(path, "V004",
-                    "Invalid pattern at " + path + ": " + e.getMessage());
+        var regex = ((SafePattern) compiled).pattern();
+        if (!regex.matcher(strValue).matches()) {
+            return new OdinSchema.ValidationError(path, "V004", "Pattern mismatch at " + path);
         }
 
         return null;
@@ -605,10 +664,11 @@ public final class ValidationEngine {
 
     // ── Schema Reference Validation ──
 
-    // Build the effective field map: schema fields plus fields contributed by
-    // type compositions (= @a & @b) and field-level typeRefs (billing = @address).
-    private static Map<String, OdinSchema.SchemaField> expandFields(
-            OdinDocument doc, OdinSchema.SchemaDefinition schema, TypeRegistry registry) {
+    // Build the document-independent base field map: schema fields plus fields
+    // contributed by object-level type compositions (parent._composition = @a & @b).
+    // Computed once per schema and cached in the schema memo.
+    private static Map<String, OdinSchema.SchemaField> expandBaseFields(
+            OdinSchema.SchemaDefinition schema, TypeRegistry registry) {
         var result = new LinkedHashMap<String, OdinSchema.SchemaField>();
 
         // Pass 1: object-level compositions (parent._composition = @a & @b).
@@ -631,9 +691,19 @@ public final class ValidationEngine {
             result.put(entry.getKey(), entry.getValue());
         }
 
-        // Pass 3: field-level typeRefs enforce the referenced type's fields under the field path,
-        // when the sub-object is present or the field is required.
-        for (var entry : new ArrayList<>(result.entrySet())) {
+        return result;
+    }
+
+    // Augment the cached base field map with field-level typeRef compositions that
+    // depend on the document: a field typed @SomeType enforces that type's fields under
+    // the field path when the sub-object is present or the field is required. Returns a
+    // fresh map; the cached base map is never mutated.
+    private static Map<String, OdinSchema.SchemaField> augmentWithPresentCompositions(
+            OdinDocument doc, OdinSchema.SchemaDefinition schema, TypeRegistry registry,
+            Map<String, OdinSchema.SchemaField> baseFields) {
+        var result = new LinkedHashMap<>(baseFields);
+
+        for (var entry : baseFields.entrySet()) {
             String path = entry.getKey();
             var field = entry.getValue();
             if (!(field.fieldType() instanceof OdinSchema.SchemaFieldType.TypeRefType ref)) continue;

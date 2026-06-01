@@ -24,6 +24,107 @@ public final class TransformEngine {
         TransformError getTransformError() { return transformError; }
     }
 
+    // ── Per-Mapping Precompute ──
+
+    // Precompiled validation data for a :validate / :enum / :range modifier on a mapping.
+    private static final class CompiledValidation {
+        java.util.regex.Pattern regex; // null when no :validate or pattern invalid
+        boolean regexInvalid;          // :validate present but pattern failed to compile
+        String pattern;
+        Set<String> enumSet;
+        List<String> enumLabel;
+        String rangeStr;
+        Double rangeMin;
+        Double rangeMax;
+        boolean active;                // any of :validate / :enum / :range present
+    }
+
+    // Directive references and boolean flags derived once from a mapping's directives
+    // and modifiers, which are data-independent and shared across executions.
+    private static final class MappingMods {
+        OdinDirective ifDir;
+        OdinDirective unlessDir;
+        OdinDirective objectDir;
+        OdinDirective validateDir;
+        OdinDirective enumDir;
+        OdinDirective rangeDir;
+        boolean hasDefault;
+        boolean hasRaw;
+        boolean hasArray;
+        boolean required;
+        boolean confidential;
+        CompiledValidation validation;
+    }
+
+    // Keyed by mapping identity; entries are reused across executions of the same transform.
+    private static final Map<FieldMapping, MappingMods> MAPPING_MODS =
+            Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    private static MappingMods getMappingMods(FieldMapping mapping) {
+        var cached = MAPPING_MODS.get(mapping);
+        if (cached != null) return cached;
+
+        var m = new MappingMods();
+        var directives = mapping.getDirectives();
+        if (directives != null) {
+            for (var d : directives) {
+                switch (d.getName()) {
+                    case "if" -> { if (m.ifDir == null) m.ifDir = d; }
+                    case "unless" -> { if (m.unlessDir == null) m.unlessDir = d; }
+                    case "object" -> { if (m.objectDir == null) m.objectDir = d; }
+                    case "validate" -> { if (m.validateDir == null) m.validateDir = d; }
+                    case "enum" -> { if (m.enumDir == null) m.enumDir = d; }
+                    case "range" -> { if (m.rangeDir == null) m.rangeDir = d; }
+                    case "default" -> m.hasDefault = true;
+                    case "raw" -> m.hasRaw = true;
+                    case "array" -> m.hasArray = true;
+                    default -> {}
+                }
+            }
+        }
+        var mods = mapping.getModifiers();
+        m.required = mods != null && mods.isRequired();
+        m.confidential = mods != null && mods.isConfidential();
+        m.validation = compileValidation(m.validateDir, m.enumDir, m.rangeDir);
+
+        MAPPING_MODS.put(mapping, m);
+        return m;
+    }
+
+    private static CompiledValidation compileValidation(OdinDirective validateDir,
+            OdinDirective enumDir, OdinDirective rangeDir) {
+        var v = new CompiledValidation();
+        v.active = validateDir != null || enumDir != null || rangeDir != null;
+
+        if (validateDir != null && validateDir.getValue() != null) {
+            v.pattern = validateDir.getValue().asString();
+            try {
+                v.regex = java.util.regex.Pattern.compile(v.pattern);
+            } catch (Exception e) {
+                v.regexInvalid = true;
+            }
+        }
+        if (enumDir != null && enumDir.getValue() != null) {
+            var allowed = new ArrayList<String>();
+            for (var part : enumDir.getValue().asString().split(",")) {
+                var s = part.trim();
+                if (s.length() >= 2 && ((s.charAt(0) == '"' && s.charAt(s.length() - 1) == '"')
+                        || (s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\'')))
+                    s = s.substring(1, s.length() - 1);
+                allowed.add(s);
+            }
+            v.enumSet = new LinkedHashSet<>(allowed);
+            v.enumLabel = allowed;
+        }
+        if (rangeDir != null && rangeDir.getValue() != null) {
+            v.rangeStr = rangeDir.getValue().asString();
+            var parts = v.rangeStr.split("\\.\\.");
+            v.rangeMin = parseDoubleOrNull(parts.length > 0 ? parts[0] : "");
+            v.rangeMax = parseDoubleOrNull(parts.length > 1 ? parts[1] : "");
+        }
+        return v;
+    }
+
     // ── Verb Registry ──
 
     private static final VerbRegistry verbRegistry = new VerbRegistry();
@@ -1054,23 +1155,24 @@ public final class TransformEngine {
 
     private static DynValue processMapping(FieldMapping mapping, ExecContext ctx, DynValue currentSource, DynValue output, String pathPrefix) {
         try {
+            var mods = getMappingMods(mapping);
             // Field :if / :unless conditions evaluate `path` truthiness or `path op value`.
-            var ifDir = findMappingDirective(mapping, "if");
+            var ifDir = mods.ifDir;
             if (ifDir != null && ifDir.getValue() != null) {
                 if (!evaluateFieldCondition(ifDir.getValue().asString(), ctx, currentSource)) return output;
             }
-            var unlessDir = findMappingDirective(mapping, "unless");
+            var unlessDir = mods.unlessDir;
             if (unlessDir != null && unlessDir.getValue() != null) {
                 if (evaluateFieldCondition(unlessDir.getValue().asString(), ctx, currentSource)) return output;
             }
 
             // A :default modifier handles a missing lookup; suppress errors raised during evaluation.
-            boolean hasDefault = findMappingDirective(mapping, "default") != null;
+            boolean hasDefault = mods.hasDefault;
             int errorsBefore = hasDefault ? ctx.errors.size() : 0;
 
             DynValue value;
             // :object builds a nested object from an inline {key = @path, ...} spec.
-            var objectDir = findMappingDirective(mapping, "object");
+            var objectDir = mods.objectDir;
             if (objectDir != null && objectDir.getValue() != null) {
                 value = buildInlineObject(objectDir.getValue().asString(), ctx, currentSource, output);
             } else {
@@ -1090,13 +1192,13 @@ public final class TransformEngine {
             checkModifierFormat(mapping, ctx);
 
             // Validation modifiers: :validate, :enum, :range (honors onValidation policy).
-            if (!validateFieldValue(value, mapping, ctx)) return output;
+            if (!validateFieldValue(value, mapping, mods, ctx)) return output;
 
             // Missing source path: a :required field always fails (T005); an ordinary
             // field honors the onMissing policy (fail -> T005, warn -> warning,
             // skip/default -> keep null). A path present-but-null is not "missing".
-            boolean required = mapping.getModifiers() != null && mapping.getModifiers().isRequired();
-            if (value.isNull() && isCopySourceAbsent(mapping, ctx, currentSource)) {
+            boolean required = mods.required;
+            if (value.isNull() && isCopySourceAbsent(mapping, mods, ctx, currentSource)) {
                 var rawPath = mapping.getExpression() instanceof CopyExpression cp
                         ? cp.getPath() : mapping.getTarget();
                 var path = rawPath.startsWith(".") ? rawPath.substring(1) : rawPath;
@@ -1119,17 +1221,17 @@ public final class TransformEngine {
             }
 
             // Confidential during processing
-            if (mapping.getModifiers() != null && mapping.getModifiers().isConfidential() && ctx.enforceConfidential != null) {
+            if (mods.confidential && ctx.enforceConfidential != null) {
                 value = applyConfidentialToValue(value, ctx.enforceConfidential);
             }
 
             // :raw emits inline JSON structurally instead of an escaped string.
-            if (findMappingDirective(mapping, "raw") != null) {
+            if (mods.hasRaw) {
                 value = parseRawJsonValue(value);
             }
 
             // :array wraps the value in a single-element array.
-            if (findMappingDirective(mapping, "array") != null) {
+            if (mods.hasArray) {
                 value = DynValue.ofArray(new ArrayList<>(List.of(value)));
             }
 
@@ -1311,54 +1413,35 @@ public final class TransformEngine {
 
     // Validate a value against :validate / :enum / :range directives.
     // Returns false when the field should be dropped (onValidation = skip or fail).
-    private static boolean validateFieldValue(DynValue value, FieldMapping mapping, ExecContext ctx) {
+    private static boolean validateFieldValue(DynValue value, FieldMapping mapping, MappingMods mods, ExecContext ctx) {
         if (value == null || value.isNull()) return true;
 
-        var validateDir = findMappingDirective(mapping, "validate");
-        var enumDir = findMappingDirective(mapping, "enum");
-        var rangeDir = findMappingDirective(mapping, "range");
-        if (validateDir == null && enumDir == null && rangeDir == null) return true;
+        var v = mods.validation;
+        if (!v.active) return true;
 
         var failures = new ArrayList<String>();
         var str = coerceToString(value);
 
-        if (validateDir != null && validateDir.getValue() != null) {
-            var pattern = validateDir.getValue().asString();
-            boolean matched = false;
-            try {
-                matched = java.util.regex.Pattern.compile(pattern).matcher(str).find();
-            } catch (Exception e) {
-                failures.add("invalid validation pattern '" + pattern + "'");
-            }
-            if (!matched && failures.isEmpty()) {
-                failures.add("value '" + str + "' does not match pattern '" + pattern + "'");
+        if (mods.validateDir != null && mods.validateDir.getValue() != null) {
+            if (v.regexInvalid) {
+                failures.add("invalid validation pattern '" + v.pattern + "'");
+            } else if (!v.regex.matcher(str).find()) {
+                failures.add("value '" + str + "' does not match pattern '" + v.pattern + "'");
             }
         }
 
-        if (enumDir != null && enumDir.getValue() != null) {
-            var allowed = new ArrayList<String>();
-            for (var part : enumDir.getValue().asString().split(",")) {
-                var v = part.trim();
-                if (v.length() >= 2 && ((v.charAt(0) == '"' && v.charAt(v.length() - 1) == '"')
-                        || (v.charAt(0) == '\'' && v.charAt(v.length() - 1) == '\'')))
-                    v = v.substring(1, v.length() - 1);
-                allowed.add(v);
-            }
-            if (!allowed.contains(str)) {
-                failures.add("value '" + str + "' is not one of [" + String.join(", ", allowed) + "]");
+        if (mods.enumDir != null && mods.enumDir.getValue() != null) {
+            if (!v.enumSet.contains(str)) {
+                failures.add("value '" + str + "' is not one of [" + String.join(", ", v.enumLabel) + "]");
             }
         }
 
-        if (rangeDir != null && rangeDir.getValue() != null) {
-            var rangeStr = rangeDir.getValue().asString();
-            var parts = rangeStr.split("\\.\\.");
-            Double min = parseDoubleOrNull(parts.length > 0 ? parts[0] : "");
-            Double max = parseDoubleOrNull(parts.length > 1 ? parts[1] : "");
+        if (mods.rangeDir != null && mods.rangeDir.getValue() != null) {
             Double num = conditionNumber(value);
             if (num == null) {
-                failures.add("value '" + str + "' is not numeric for range " + rangeStr);
-            } else if ((min != null && num < min) || (max != null && num > max)) {
-                failures.add("value " + str + " is outside range " + rangeStr);
+                failures.add("value '" + str + "' is not numeric for range " + v.rangeStr);
+            } else if ((v.rangeMin != null && num < v.rangeMin) || (v.rangeMax != null && num > v.rangeMax)) {
+                failures.add("value " + str + " is outside range " + v.rangeStr);
             }
         }
 
@@ -1669,14 +1752,12 @@ public final class TransformEngine {
     // Whether a mapping copies a source path that is absent (no such key) — distinct
     // from a path present with a null value. Only plain copy expressions qualify;
     // verbs, literals, objects, special and counter paths are never "missing source".
-    private static boolean isCopySourceAbsent(FieldMapping mapping, ExecContext ctx, DynValue currentSource) {
+    private static boolean isCopySourceAbsent(FieldMapping mapping, MappingMods mods, ExecContext ctx, DynValue currentSource) {
         if (!(mapping.getExpression() instanceof CopyExpression copy)) return false;
-        if (mapping.getModifiers() != null && mapping.getModifiers().isRequired()
-                && findMappingDirective(mapping, "object") != null) {
+        if (mods.required && mods.objectDir != null) {
             return false;
         }
-        if (findMappingDirective(mapping, "default") != null
-                || findMappingDirective(mapping, "object") != null) {
+        if (mods.hasDefault || mods.objectDir != null) {
             return false;
         }
         var path = copy.getPath();

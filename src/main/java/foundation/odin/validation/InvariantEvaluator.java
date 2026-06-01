@@ -4,6 +4,7 @@ import foundation.odin.types.OdinValue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 /**
@@ -17,6 +18,9 @@ import java.util.function.Function;
  *   multiplicative = unary , { ( "*" | "/" | "%" ) , unary }
  *   unary          = [ "!" ] , primary
  *   primary        = path | number | string | "(" , expression , ")"
+ *
+ * An expression is parsed to an AST once and cached by its source string; each
+ * document validation evaluates the cached AST against that document's values.
  */
 public final class InvariantEvaluator {
 
@@ -84,137 +88,124 @@ public final class InvariantEvaluator {
         return tokens;
     }
 
-    /** Parse and evaluate an invariant expression against document field values. */
-    public static InvariantResult evaluate(String expr, FieldResolver resolve) {
-        return new Parser(tokenize(expr), resolve).run();
+    // ── AST ──
+
+    private sealed interface Node
+            permits NumberNode, StringNode, BoolNode, FieldNode, NotNode, LogicNode,
+                    EqualityNode, CompareNode, AdditiveNode, MultiplicativeNode {}
+
+    private record NumberNode(double value) implements Node {}
+    private record StringNode(String value) implements Node {}
+    private record BoolNode(boolean value) implements Node {}
+    private record FieldNode(String name) implements Node {}
+    private record NotNode(Node operand) implements Node {}
+    private record LogicNode(String op, Node left, Node right) implements Node {}
+    private record EqualityNode(String op, Node left, Node right) implements Node {}
+    private record CompareNode(String op, Node left, Node right) implements Node {}
+    private record AdditiveNode(String op, Node left, Node right) implements Node {}
+    private record MultiplicativeNode(String op, Node left, Node right) implements Node {}
+
+    // ── Parse (string → AST), cached per expression source ──
+
+    private static final ConcurrentHashMap<String, Node> AST_CACHE = new ConcurrentHashMap<>();
+
+    private static Node getAst(String expr) {
+        return AST_CACHE.computeIfAbsent(expr, e -> new AstParser(tokenize(e)).run());
     }
 
-    private static final class Parser {
+    private static final class AstParser {
         private final List<Token> tokens;
-        private final FieldResolver resolve;
         private int pos = 0;
-        private boolean absentOperand = false;
-        private boolean nullOperand = false;
 
-        Parser(List<Token> tokens, FieldResolver resolve) {
-            this.tokens = tokens;
-            this.resolve = resolve;
-        }
+        AstParser(List<Token> tokens) { this.tokens = tokens; }
 
-        InvariantResult run() {
-            Object finalVal = parseExpression();
+        Node run() {
+            Node ast = parseExpression();
             if (peek() != null) throw new IllegalArgumentException("Unexpected trailing tokens in invariant expression");
-
-            Boolean result;
-            if (nullOperand) {
-                result = Boolean.FALSE;
-            } else if (absentOperand) {
-                result = null;
-            } else {
-                result = toBool(finalVal);
-            }
-            return new InvariantResult(result, nullOperand);
+            return ast;
         }
 
         private Token peek() { return pos < tokens.size() ? tokens.get(pos) : null; }
         private Token next() { return pos < tokens.size() ? tokens.get(pos++) : null; }
         private String peekText() { Token t = peek(); return t != null ? t.text() : null; }
 
-        private Object parseExpression() { return parseLogicOr(); }
+        private Node parseExpression() { return parseLogicOr(); }
 
-        private Object parseLogicOr() {
-            Object left = parseLogicAnd();
+        private Node parseLogicOr() {
+            Node left = parseLogicAnd();
             while ("||".equals(peekText())) {
                 next();
-                Object right = parseLogicAnd();
-                left = toBool(left) || toBool(right);
+                Node right = parseLogicAnd();
+                left = new LogicNode("||", left, right);
             }
             return left;
         }
 
-        private Object parseLogicAnd() {
-            Object left = parseEquality();
+        private Node parseLogicAnd() {
+            Node left = parseEquality();
             while ("&&".equals(peekText())) {
                 next();
-                Object right = parseEquality();
-                left = toBool(left) && toBool(right);
+                Node right = parseEquality();
+                left = new LogicNode("&&", left, right);
             }
             return left;
         }
 
-        private Object parseEquality() {
-            Object left = parseComparison();
+        private Node parseEquality() {
+            Node left = parseComparison();
             while ("==".equals(peekText()) || "!=".equals(peekText()) || "=".equals(peekText())) {
                 String op = next().text();
-                Object right = parseComparison();
-                boolean eq = looseEquals(left, right);
-                left = "!=".equals(op) ? !eq : eq;
+                Node right = parseComparison();
+                left = new EqualityNode(op, left, right);
             }
             return left;
         }
 
-        private Object parseComparison() {
-            Object left = parseAdditive();
+        private Node parseComparison() {
+            Node left = parseAdditive();
             while (isOneOf(peekText(), ">", "<", ">=", "<=")) {
                 String op = next().text();
-                Object right = parseAdditive();
-                left = compare(left, op, right);
+                Node right = parseAdditive();
+                left = new CompareNode(op, left, right);
             }
             return left;
         }
 
-        private Object parseAdditive() {
-            Object left = parseMultiplicative();
+        private Node parseAdditive() {
+            Node left = parseMultiplicative();
             while ("+".equals(peekText()) || "-".equals(peekText())) {
                 String op = next().text();
-                Object right = parseMultiplicative();
-                Double ln = toNum(left);
-                Double rn = toNum(right);
-                if (ln == null || rn == null) {
-                    left = Double.NaN;
-                } else {
-                    left = "+".equals(op) ? ln + rn : ln - rn;
-                }
+                Node right = parseMultiplicative();
+                left = new AdditiveNode(op, left, right);
             }
             return left;
         }
 
-        private Object parseMultiplicative() {
-            Object left = parseUnary();
+        private Node parseMultiplicative() {
+            Node left = parseUnary();
             while (isOneOf(peekText(), "*", "/", "%")) {
                 String op = next().text();
-                Object right = parseUnary();
-                Double ln = toNum(left);
-                Double rn = toNum(right);
-                if (ln == null || rn == null) {
-                    left = Double.NaN;
-                } else if ("*".equals(op)) {
-                    left = ln * rn;
-                } else if ("/".equals(op)) {
-                    left = rn == 0 ? Double.NaN : ln / rn;
-                } else {
-                    left = rn == 0 ? Double.NaN : ln % rn;
-                }
+                Node right = parseUnary();
+                left = new MultiplicativeNode(op, left, right);
             }
             return left;
         }
 
-        private Object parseUnary() {
+        private Node parseUnary() {
             if ("!".equals(peekText())) {
                 next();
-                Object operand = parseUnary();
-                return !toBool(operand);
+                return new NotNode(parseUnary());
             }
             return parsePrimary();
         }
 
-        private Object parsePrimary() {
+        private Node parsePrimary() {
             Token tok = next();
             if (tok == null) throw new IllegalArgumentException("Unexpected end of invariant expression");
 
             switch (tok.kind()) {
                 case LPAREN -> {
-                    Object inner = parseExpression();
+                    Node inner = parseExpression();
                     Token close = next();
                     if (close == null || close.kind() != Kind.RPAREN) {
                         throw new IllegalArgumentException("Expected closing parenthesis");
@@ -223,30 +214,95 @@ public final class InvariantEvaluator {
                 }
                 case NUMBER -> {
                     try {
-                        return Double.parseDouble(tok.text());
+                        return new NumberNode(Double.parseDouble(tok.text()));
                     } catch (NumberFormatException e) {
                         throw new IllegalArgumentException("Invalid number '" + tok.text() + "'");
                     }
                 }
                 case STRING -> {
-                    return tok.text();
+                    return new StringNode(tok.text());
                 }
                 case IDENT -> {
-                    if ("true".equals(tok.text())) return Boolean.TRUE;
-                    if ("false".equals(tok.text())) return Boolean.FALSE;
-                    OdinValue value = resolve.apply(tok.text());
-                    if (value == null) {
-                        absentOperand = true;
-                        return Double.NaN;
-                    }
-                    if (value instanceof OdinValue.OdinNull) {
-                        nullOperand = true;
-                        return null;
-                    }
-                    return operandFromValue(value);
+                    if ("true".equals(tok.text())) return new BoolNode(true);
+                    if ("false".equals(tok.text())) return new BoolNode(false);
+                    return new FieldNode(tok.text());
                 }
                 default -> throw new IllegalArgumentException("Unexpected token '" + tok.text() + "'");
             }
+        }
+    }
+
+    // ── Evaluate (AST + resolver → result), per document ──
+
+    /** Parse and evaluate an invariant expression against document field values. */
+    public static InvariantResult evaluate(String expr, FieldResolver resolve) {
+        Node ast = getAst(expr);
+        var state = new EvalState(resolve);
+        Object finalVal = state.eval(ast);
+
+        Boolean result;
+        if (state.nullOperand) {
+            result = Boolean.FALSE;
+        } else if (state.absentOperand) {
+            result = null;
+        } else {
+            result = toBool(finalVal);
+        }
+        return new InvariantResult(result, state.nullOperand);
+    }
+
+    private static final class EvalState {
+        private final FieldResolver resolve;
+        private boolean absentOperand = false;
+        private boolean nullOperand = false;
+
+        EvalState(FieldResolver resolve) { this.resolve = resolve; }
+
+        Object eval(Node node) {
+            return switch (node) {
+                case NumberNode n -> n.value();
+                case StringNode s -> s.value();
+                case BoolNode b -> b.value();
+                case FieldNode f -> {
+                    OdinValue value = resolve.apply(f.name());
+                    if (value == null) {
+                        absentOperand = true;
+                        yield Double.NaN;
+                    }
+                    if (value instanceof OdinValue.OdinNull) {
+                        nullOperand = true;
+                        yield null;
+                    }
+                    yield operandFromValue(value);
+                }
+                case NotNode not -> !toBool(eval(not.operand()));
+                case LogicNode logic -> {
+                    Object left = eval(logic.left());
+                    Object right = eval(logic.right());
+                    yield "||".equals(logic.op()) ? toBool(left) || toBool(right) : toBool(left) && toBool(right);
+                }
+                case EqualityNode equality -> {
+                    Object left = eval(equality.left());
+                    Object right = eval(equality.right());
+                    boolean eq = looseEquals(left, right);
+                    yield "!=".equals(equality.op()) ? !eq : eq;
+                }
+                case CompareNode cmp -> compare(eval(cmp.left()), cmp.op(), eval(cmp.right()));
+                case AdditiveNode add -> {
+                    Double ln = toNum(eval(add.left()));
+                    Double rn = toNum(eval(add.right()));
+                    if (ln == null || rn == null) yield Double.NaN;
+                    yield "+".equals(add.op()) ? ln + rn : ln - rn;
+                }
+                case MultiplicativeNode mul -> {
+                    Double ln = toNum(eval(mul.left()));
+                    Double rn = toNum(eval(mul.right()));
+                    if (ln == null || rn == null) yield Double.NaN;
+                    if ("*".equals(mul.op())) yield ln * rn;
+                    if ("/".equals(mul.op())) yield rn == 0 ? Double.NaN : ln / rn;
+                    yield rn == 0 ? Double.NaN : ln % rn;
+                }
+            };
         }
     }
 
