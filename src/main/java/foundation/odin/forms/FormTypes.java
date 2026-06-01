@@ -38,7 +38,26 @@ public final class FormTypes {
             /** Multi-language label dictionary ({$.i18n}). May be null. */
             Map<String, String> i18n,
             /** Ordered list of form pages (page[0], page[1], ...). */
-            List<FormPage> pages
+            List<FormPage> pages,
+            /** Page templates ({@tpl_*}) keyed by template name. May be null. */
+            Map<String, PageTemplate> templates
+    ) {}
+
+    /**
+     * A page template ({@code {@tpl_*}}) — a layout for dynamically generated
+     * overflow pages. Not rendered directly; instantiated when a region overflows.
+     */
+    public record PageTemplate(
+            /** Template name (e.g. tpl_vehicles_continued). */
+            String name,
+            /** Always true — marks this as a template, not a concrete page. */
+            boolean pageTemplate,
+            /** Names the region this template continues (e.g. region.vehicles). May be null. */
+            String continues,
+            /** Form identifier for continuation pages. May be null. */
+            String formId,
+            /** Elements contained in the template, in document order. */
+            List<FormElement> elements
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -90,11 +109,23 @@ public final class FormTypes {
             double height,
             /** Measurement unit for all coordinates and dimensions on the page. */
             PageUnit unit,
-            /** Page margin in the declared unit. NaN when absent. */
-            double margin
+            /** Per-side page margins in the declared unit. May be null. */
+            PageMargins margin
     ) {
-        public boolean hasMargin() { return !Double.isNaN(margin); }
+        public boolean hasMargin() { return margin != null; }
     }
+
+    /**
+     * Per-side page margins. Corresponds to {@code margin.top}, {@code margin.right},
+     * {@code margin.bottom}, {@code margin.left} under {@code {$.page}}.
+     * Each side may be null when absent.
+     */
+    public record PageMargins(
+            Double top,
+            Double right,
+            Double bottom,
+            Double left
+    ) {}
 
     /**
      * Optional settings for screen/web rendering.
@@ -166,7 +197,9 @@ public final class FormTypes {
         FIELD_TEXT("field.text"), FIELD_CHECKBOX("field.checkbox"),
         FIELD_RADIO("field.radio"), FIELD_SELECT("field.select"),
         FIELD_MULTISELECT("field.multiselect"), FIELD_DATE("field.date"),
-        FIELD_SIGNATURE("field.signature");
+        FIELD_SIGNATURE("field.signature"),
+        // Container
+        REGION("region");
 
         private final String value;
 
@@ -188,11 +221,15 @@ public final class FormTypes {
             permits LineElement, RectElement, CircleElement, EllipseElement,
                     PolygonElement, PolylineElement, PathElement,
                     TextElement, ImageElement, BarcodeElement,
-                    BaseFieldElement {
+                    BaseFieldElement, RegionElement {
 
         private final ElementType type;
         private final String name;
         private final String id;
+        /** Per-item vertical offset when this element is a region child. May be null. */
+        private Double yOffset;
+        /** Per-item horizontal offset when this element is a region child. May be null. */
+        private Double xOffset;
 
         protected FormElement(ElementType type, String name, String id) {
             this.type = type;
@@ -211,6 +248,17 @@ public final class FormTypes {
          * May be null.
          */
         public String id() { return id; }
+
+        /** Per-item vertical offset when this element repeats inside a region. May be null. */
+        public Double yOffset() { return yOffset; }
+
+        /** Per-item horizontal offset when this element repeats inside a region. May be null. */
+        public Double xOffset() { return xOffset; }
+
+        void setOffsets(Double yOffset, Double xOffset) {
+            this.yOffset = yOffset;
+            this.xOffset = xOffset;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -520,13 +568,16 @@ public final class FormTypes {
     public static final class ImageElement extends FormElement {
         private final String src, alt;
         private final double x, y, w, h;
+        private final Boolean background;
 
         public ImageElement(String name, String id,
                             String src, String alt,
-                            double x, double y, double w, double h) {
+                            double x, double y, double w, double h,
+                            Boolean background) {
             super(ElementType.IMG, name, id);
             this.src = src; this.alt = alt;
             this.x = x; this.y = y; this.w = w; this.h = h;
+            this.background = background;
         }
 
         public String src() { return src; }
@@ -535,6 +586,8 @@ public final class FormTypes {
         public double y() { return y; }
         public double w() { return w; }
         public double h() { return h; }
+        /** When true, renders behind all other elements at the lowest z-index. May be null. */
+        public Boolean background() { return background; }
     }
 
     /** Barcode symbology enum. */
@@ -653,6 +706,8 @@ public final class FormTypes {
 
     /** Single-line or multi-line text input field. (field.text) */
     public static final class TextFieldElement extends BaseFieldElement {
+        private final String value;
+        private final String inputType;
         private final String mask;
         private final String placeholder;
         private final Boolean multiline;
@@ -666,15 +721,21 @@ public final class FormTypes {
                                 Integer minLength, Integer maxLength,
                                 String min, String max,
                                 Integer tabindex, Boolean readonly,
+                                String value, String inputType,
                                 String mask, String placeholder,
                                 Boolean multiline, Integer maxLines) {
             super(ElementType.FIELD_TEXT, name, id,
                   label, ariaLabel, x, y, w, h, bind,
                   required, pattern, minLength, maxLength, min, max, tabindex, readonly);
+            this.value = value; this.inputType = inputType;
             this.mask = mask; this.placeholder = placeholder;
             this.multiline = multiline; this.maxLines = maxLines;
         }
 
+        /** Current inline text value. May be null. */
+        public String value() { return value; }
+        /** Screen rendering hint for the HTML5 input type. May be null. */
+        public String inputType() { return inputType; }
         public String mask() { return mask; }
         public String placeholder() { return placeholder; }
         public Boolean multiline() { return multiline; }
@@ -683,6 +744,8 @@ public final class FormTypes {
 
     /** Boolean checkbox field. (field.checkbox) */
     public static final class CheckboxElement extends BaseFieldElement {
+        private final Boolean checked;
+
         public CheckboxElement(String name, String id,
                                String label, String ariaLabel,
                                double x, double y, double w, double h,
@@ -690,11 +753,16 @@ public final class FormTypes {
                                Boolean required, String pattern,
                                Integer minLength, Integer maxLength,
                                String min, String max,
-                               Integer tabindex, Boolean readonly) {
+                               Integer tabindex, Boolean readonly,
+                               Boolean checked) {
             super(ElementType.FIELD_CHECKBOX, name, id,
                   label, ariaLabel, x, y, w, h, bind,
                   required, pattern, minLength, maxLength, min, max, tabindex, readonly);
+            this.checked = checked;
         }
+
+        /** Whether the checkbox is checked. Optional inline value; may be null. */
+        public Boolean checked() { return checked; }
     }
 
     /** Radio button field — part of a mutually exclusive group. (field.radio) */
@@ -725,6 +793,7 @@ public final class FormTypes {
     /** Single-selection dropdown field. (field.select) */
     public static final class SelectElement extends BaseFieldElement {
         private final List<String> options;
+        private final String selected;
         private final String placeholder;
 
         public SelectElement(String name, String id,
@@ -735,21 +804,25 @@ public final class FormTypes {
                              Integer minLength, Integer maxLength,
                              String min, String max,
                              Integer tabindex, Boolean readonly,
-                             List<String> options, String placeholder) {
+                             List<String> options, String selected, String placeholder) {
             super(ElementType.FIELD_SELECT, name, id,
                   label, ariaLabel, x, y, w, h, bind,
                   required, pattern, minLength, maxLength, min, max, tabindex, readonly);
             this.options = options != null ? List.copyOf(options) : List.of();
+            this.selected = selected;
             this.placeholder = placeholder;
         }
 
         public List<String> options() { return options; }
+        /** Currently selected option value. Optional inline value; may be null. */
+        public String selected() { return selected; }
         public String placeholder() { return placeholder; }
     }
 
     /** Multiple-selection list field. (field.multiselect) */
     public static final class MultiselectElement extends BaseFieldElement {
         private final List<String> options;
+        private final List<String> selected;
         private final Integer minSelect;
         private final Integer maxSelect;
 
@@ -761,23 +834,28 @@ public final class FormTypes {
                                   Integer minLength, Integer maxLength,
                                   String min, String max,
                                   Integer tabindex, Boolean readonly,
-                                  List<String> options,
+                                  List<String> options, List<String> selected,
                                   Integer minSelect, Integer maxSelect) {
             super(ElementType.FIELD_MULTISELECT, name, id,
                   label, ariaLabel, x, y, w, h, bind,
                   required, pattern, minLength, maxLength, min, max, tabindex, readonly);
             this.options = options != null ? List.copyOf(options) : List.of();
+            this.selected = selected != null ? List.copyOf(selected) : null;
             this.minSelect = minSelect;
             this.maxSelect = maxSelect;
         }
 
         public List<String> options() { return options; }
+        /** Currently selected option values. Optional inline value; may be null. */
+        public List<String> selected() { return selected; }
         public Integer minSelect() { return minSelect; }
         public Integer maxSelect() { return maxSelect; }
     }
 
     /** Date input field. (field.date) */
     public static final class DateElement extends BaseFieldElement {
+        private final String value;
+
         public DateElement(String name, String id,
                            String label, String ariaLabel,
                            double x, double y, double w, double h,
@@ -785,15 +863,21 @@ public final class FormTypes {
                            Boolean required, String pattern,
                            Integer minLength, Integer maxLength,
                            String min, String max,
-                           Integer tabindex, Boolean readonly) {
+                           Integer tabindex, Boolean readonly,
+                           String value) {
             super(ElementType.FIELD_DATE, name, id,
                   label, ariaLabel, x, y, w, h, bind,
                   required, pattern, minLength, maxLength, min, max, tabindex, readonly);
+            this.value = value;
         }
+
+        /** Current date value as an ISO 8601 date string. Optional inline value; may be null. */
+        public String value() { return value; }
     }
 
     /** Signature capture area. (field.signature) */
     public static final class SignatureElement extends BaseFieldElement {
+        private final String value;
         private final String dateField;
 
         public SignatureElement(String name, String id,
@@ -804,15 +888,59 @@ public final class FormTypes {
                                 Integer minLength, Integer maxLength,
                                 String min, String max,
                                 Integer tabindex, Boolean readonly,
-                                String dateField) {
+                                String value, String dateField) {
             super(ElementType.FIELD_SIGNATURE, name, id,
                   label, ariaLabel, x, y, w, h, bind,
                   required, pattern, minLength, maxLength, min, max, tabindex, readonly);
+            this.value = value;
             this.dateField = dateField;
         }
 
+        /** Captured signature data as an ODIN binary literal. May be null. */
+        public String value() { return value; }
         /** ODIN reference to an associated date field. May be null. */
         public String dateField() { return dateField; }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Region
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * A container grouping repeating content bound to an array. ({.region.*})
+     *
+     * Child elements repeat for each item in the bound array; when items exceed
+     * {@code max}, overflow pages are generated via {@code overflow}.
+     */
+    public static final class RegionElement extends FormElement {
+        private final double x, y, w, h;
+        private final String bind;
+        private final Integer max;
+        private final String overflow;
+        private final List<FormElement> children;
+
+        public RegionElement(String name, String id,
+                             double x, double y, double w, double h,
+                             String bind, Integer max, String overflow,
+                             List<FormElement> children) {
+            super(ElementType.REGION, name, id);
+            this.x = x; this.y = y; this.w = w; this.h = h;
+            this.bind = bind; this.max = max; this.overflow = overflow;
+            this.children = children != null ? List.copyOf(children) : List.of();
+        }
+
+        public double x() { return x; }
+        public double y() { return y; }
+        public double w() { return w; }
+        public double h() { return h; }
+        /** ODIN path to the array data source (e.g. @policy.vehicles). May be null. */
+        public String bind() { return bind; }
+        /** Maximum items before overflow. May be null. */
+        public Integer max() { return max; }
+        /** {@code clone} or a template reference (e.g. @tpl_vehicles_continued). May be null. */
+        public String overflow() { return overflow; }
+        /** Child elements, repeated per bound item. */
+        public List<FormElement> children() { return children; }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

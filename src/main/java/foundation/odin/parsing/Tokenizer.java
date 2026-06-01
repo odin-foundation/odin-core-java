@@ -448,19 +448,14 @@ public final class Tokenizer {
             }
         }
 
-        boolean inBracket = false;
         while (!state.isAtEnd()) {
             char c = state.peek();
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                (c >= '0' && c <= '9') || c == '_' || c == '.') {
+                (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-') {
                 state.advance();
             } else if (c == '[') {
-                inBracket = true;
                 state.advance();
             } else if (c == ']') {
-                inBracket = false;
-                state.advance();
-            } else if (c == '-' && inBracket) {
                 state.advance();
             } else {
                 break;
