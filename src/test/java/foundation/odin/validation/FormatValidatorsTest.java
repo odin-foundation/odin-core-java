@@ -163,6 +163,125 @@ class FormatValidatorsTest {
         @Test void emptyFeinPassesGuard() { assertTrue(FormatValidators.validate("", "fein")); }
     }
 
+    // ─── URI ─────────────────────────────────────────────────────────────
+
+    @Nested class UriTests {
+        @Test void validUrn() { assertTrue(FormatValidators.validate("urn:isbn:0451450523", "uri")); }
+        @Test void validMailto() { assertTrue(FormatValidators.validate("mailto:user@example.com", "uri")); }
+        @Test void invalidNoScheme() { assertFalse(FormatValidators.validate("/relative/path", "uri")); }
+        @Test void emptyPassesGuard() { assertTrue(FormatValidators.validate("", "uri")); }
+    }
+
+    // ─── Hostname ────────────────────────────────────────────────────────
+
+    @Nested class HostnameTests {
+        @Test void validHostname() { assertTrue(FormatValidators.validate("example.com", "hostname")); }
+        @Test void validSubdomain() { assertTrue(FormatValidators.validate("sub.example.co.uk", "hostname")); }
+        @Test void invalidLeadingHyphen() { assertFalse(FormatValidators.validate("-bad.example.com", "hostname")); }
+        @Test void invalidUnderscore() { assertFalse(FormatValidators.validate("bad_underscore.com", "hostname")); }
+    }
+
+    // ─── Datetime ────────────────────────────────────────────────────────
+
+    @Nested class DatetimeTests {
+        @Test void validDatetime() { assertTrue(FormatValidators.validate("2024-06-15T10:30:00", "datetime")); }
+        @Test void validZulu() { assertTrue(FormatValidators.validate("2024-06-15T10:30:00Z", "datetime")); }
+        @Test void validDateTimeAlias() { assertTrue(FormatValidators.validate("2024-06-15T10:30:00Z", "date-time")); }
+        @Test void invalidSpaceSeparator() { assertFalse(FormatValidators.validate("2024-06-15 10:30:00", "datetime")); }
+        @Test void invalidDateOnly() { assertFalse(FormatValidators.validate("2024-06-15", "datetime")); }
+        @Test void invalidSlashes() { assertFalse(FormatValidators.validate("06/15/2024", "date-time")); }
+    }
+
+    // ─── Credit card alias ───────────────────────────────────────────────
+
+    @Nested class CreditCardAliasTests {
+        @Test void validHyphenAlias() { assertTrue(FormatValidators.validate("4111111111111111", "credit-card")); }
+        @Test void invalidLuhn() { assertFalse(FormatValidators.validate("4111111111111112", "credit-card")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("411111111111", "credit-card")); }
+    }
+
+    // ─── IBAN ────────────────────────────────────────────────────────────
+
+    @Nested class IbanTests {
+        @Test void validGb() { assertTrue(FormatValidators.validate("GB82WEST12345698765432", "iban")); }
+        @Test void validDe() { assertTrue(FormatValidators.validate("DE89370400440532013000", "iban")); }
+        @Test void invalidNoCountry() { assertFalse(FormatValidators.validate("1234WEST", "iban")); }
+    }
+
+    // ─── BIC / SWIFT ─────────────────────────────────────────────────────
+
+    @Nested class BicTests {
+        @Test void valid8() { assertTrue(FormatValidators.validate("DEUTDEFF", "bic")); }
+        @Test void valid11() { assertTrue(FormatValidators.validate("DEUTDEFF500", "bic")); }
+        @Test void invalid9Chars() { assertFalse(FormatValidators.validate("DEUTDEFF5", "bic")); }
+        @Test void validSwift() { assertTrue(FormatValidators.validate("BOFAUS3N", "swift")); }
+        @Test void invalidSwiftShort() { assertFalse(FormatValidators.validate("BOFAUS3", "swift")); }
+    }
+
+    // ─── Routing ─────────────────────────────────────────────────────────
+
+    @Nested class RoutingTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("021000021", "routing")); }
+        @Test void invalid8Digits() { assertFalse(FormatValidators.validate("12345678", "routing")); }
+    }
+
+    // ─── CUSIP ───────────────────────────────────────────────────────────
+
+    @Nested class CusipTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("037833100", "cusip")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("03783310", "cusip")); }
+        @Test void invalidSymbol() { assertFalse(FormatValidators.validate("037833$00", "cusip")); }
+    }
+
+    // ─── ISIN ────────────────────────────────────────────────────────────
+
+    @Nested class IsinTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("US0378331005", "isin")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("US037833100", "isin")); }
+        @Test void invalidNonDigitCheck() { assertFalse(FormatValidators.validate("US037833100X", "isin")); }
+    }
+
+    // ─── LEI ─────────────────────────────────────────────────────────────
+
+    @Nested class LeiTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("529900T8BM49AURSDO55", "lei")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("529900T8BM49AURSDO5", "lei")); }
+        @Test void invalidSymbol() { assertFalse(FormatValidators.validate("529900T8BM49AURSDO5$", "lei")); }
+    }
+
+    // ─── NPI ─────────────────────────────────────────────────────────────
+
+    @Nested class NpiTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("1234567890", "npi")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("123456789", "npi")); }
+        @Test void invalidTooLong() { assertFalse(FormatValidators.validate("12345678901", "npi")); }
+    }
+
+    // ─── DEA ─────────────────────────────────────────────────────────────
+
+    @Nested class DeaTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("AB1234567", "dea")); }
+        @Test void invalidOneLetter() { assertFalse(FormatValidators.validate("A1234567", "dea")); }
+        @Test void invalidShortDigits() { assertFalse(FormatValidators.validate("AB123456", "dea")); }
+    }
+
+    // ─── IMEI ────────────────────────────────────────────────────────────
+
+    @Nested class ImeiTests {
+        @Test void valid() { assertTrue(FormatValidators.validate("490154203237518", "imei")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("49015420323751", "imei")); }
+        @Test void invalidTooLong() { assertFalse(FormatValidators.validate("4901542032375189", "imei")); }
+    }
+
+    // ─── ICCID ───────────────────────────────────────────────────────────
+
+    @Nested class IccidTests {
+        @Test void valid19() { assertTrue(FormatValidators.validate("8901234567890123456", "iccid")); }
+        @Test void valid20() { assertTrue(FormatValidators.validate("89012345678901234567", "iccid")); }
+        @Test void invalidTooShort() { assertFalse(FormatValidators.validate("890123456789012345", "iccid")); }
+        @Test void invalidLetter() { assertFalse(FormatValidators.validate("8901234567890123456X", "iccid")); }
+    }
+
     // ─── Unknown format ──────────────────────────────────────────────────
 
     @Nested class UnknownFormatTests {

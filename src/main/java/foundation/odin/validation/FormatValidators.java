@@ -11,7 +11,10 @@ public final class FormatValidators {
         return switch (format) {
             case "email" -> validateEmail(value);
             case "url" -> validateUrl(value);
+            case "uri" -> validateUri(value);
             case "uuid" -> validateUuid(value);
+            case "hostname" -> validateHostname(value);
+            case "datetime", "date-time" -> validateDatetime(value);
             case "ipv4" -> validateIpv4(value);
             case "ipv6" -> validateIpv6(value);
             case "phone" -> validatePhone(value);
@@ -24,8 +27,18 @@ public final class FormatValidators {
             case "country-alpha2" -> validateIsoCode2(value, ISO_ALPHA2);
             case "country-alpha3" -> validateIsoCode3(value, ISO_ALPHA3);
             case "state-us" -> validateIsoCode2(value, US_STATES);
-            case "creditcard" -> validateLuhn(value);
+            case "creditcard", "credit-card" -> validateLuhn(value);
             case "ssn" -> validateTaxId(value);
+            case "iban" -> validateIban(value);
+            case "bic", "swift" -> validateBic(value);
+            case "routing" -> value.matches("^\\d{9}$");
+            case "cusip" -> value.matches("^[A-Za-z0-9]{9}$");
+            case "isin" -> value.matches("^[A-Za-z]{2}[A-Za-z0-9]{9}\\d$");
+            case "lei" -> value.matches("^[A-Za-z0-9]{20}$");
+            case "npi" -> value.matches("^\\d{10}$");
+            case "dea" -> value.matches("^[A-Za-z]{2}\\d{7}$");
+            case "imei" -> value.matches("^\\d{15}$");
+            case "iccid" -> value.matches("^\\d{19,20}$");
             default -> true;
         };
     }
@@ -44,6 +57,32 @@ public final class FormatValidators {
     private static boolean validateUrl(String value) {
         if (value.isEmpty()) return true;
         return value.startsWith("http://") || value.startsWith("https://");
+    }
+
+    private static boolean validateUri(String value) {
+        if (value.isEmpty()) return true;
+        return value.matches("^[a-zA-Z][a-zA-Z0-9+.-]*:\\S*$");
+    }
+
+    private static boolean validateHostname(String value) {
+        if (value.isEmpty()) return true;
+        return value.matches(
+                "^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$");
+    }
+
+    private static boolean validateDatetime(String value) {
+        if (value.isEmpty()) return true;
+        return value.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*$");
+    }
+
+    private static boolean validateIban(String value) {
+        if (value.isEmpty()) return true;
+        return value.matches("^[A-Za-z]{2}\\d{2}[A-Za-z0-9]{4,30}$");
+    }
+
+    private static boolean validateBic(String value) {
+        if (value.isEmpty()) return true;
+        return value.matches("^[A-Za-z]{4}[A-Za-z]{2}[A-Za-z0-9]{2}([A-Za-z0-9]{3})?$");
     }
 
     private static boolean validateUuid(String value) {

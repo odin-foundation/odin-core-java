@@ -208,6 +208,8 @@ public class GoldenFormsTests {
     private static String valueOf(FormElement el) {
         if (el instanceof TextFieldElement t) return t.value();
         if (el instanceof DateElement d) return d.value();
+        if (el instanceof RadioElement r) return r.value();
+        if (el instanceof SignatureElement s) return s.value();
         return null;
     }
 

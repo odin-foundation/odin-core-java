@@ -174,4 +174,144 @@ class FormsHappyTest {
         assertTrue(html.contains("<option value=\"AL\">AL</option>"));
         assertTrue(html.contains("<option value=\"TX\" selected>TX</option>"), "selected option marked");
     }
+
+    @Test
+    void radioGroupChecksBoundOption() {
+        String formText = """
+                {$}
+                odin = "1.0.0"
+                forms = "1.0.0"
+                title = "Radio"
+                id = "rad"
+                lang = "en"
+
+                {$.page}
+                width = #8.5
+                height = #11
+                unit = "inch"
+
+                {page[0]}
+                {.field.gender_m}
+                type = "radio"
+                x = #0.6
+                y = #2
+                w = #0.2
+                h = #0.2
+                label = "Male"
+                group = "gender"
+                value = "M"
+                bind = @applicant.gender
+
+                {.field.gender_f}
+                type = "radio"
+                x = #1.6
+                y = #2
+                w = #0.2
+                h = #0.2
+                label = "Female"
+                group = "gender"
+                value = "F"
+                bind = @applicant.gender
+                """;
+        OdinForm form = FormParser.parseForm(formText);
+        RadioElement m = (RadioElement) form.pages().get(0).elements().get(0);
+        assertEquals("gender", m.group());
+        assertEquals("M", m.value());
+
+        OdinDocument data = Odin.parse("""
+                {applicant}
+                gender = "F"
+                """);
+        String html = FormRenderer.renderForm(form, data, RenderFormOptions.of(RenderTarget.HTML));
+        assertTrue(html.contains("name=\"gender\" value=\"F\" aria-label=\"Female\" checked>"), "bound option checked");
+        assertFalse(html.contains("name=\"gender\" value=\"M\" aria-label=\"Male\" checked"), "unbound option unchecked");
+    }
+
+    @Test
+    void signatureParsesValueAndRendersCaptureArea() {
+        String formText = """
+                {$}
+                odin = "1.0.0"
+                forms = "1.0.0"
+                title = "Signature"
+                id = "sig"
+                lang = "en"
+
+                {$.page}
+                width = #8.5
+                height = #11
+                unit = "inch"
+
+                {page[0]}
+                {.field.applicant_sig}
+                type = "signature"
+                x = #0.6
+                y = #8
+                w = #3
+                h = #0.6
+                label = "Applicant Signature"
+                required = ?true
+                value = ^png:iVBORw0KGgo=
+                bind = @applicant.signature
+                """;
+        OdinForm form = FormParser.parseForm(formText);
+        SignatureElement sig = (SignatureElement) form.pages().get(0).elements().get(0);
+        assertEquals("^png:iVBORw0KGgo=", sig.value());
+
+        String html = FormRenderer.renderForm(form, null, RenderFormOptions.of(RenderTarget.HTML));
+        assertTrue(html.contains("<div class=\"odin-form-signature\" id=\"odin-field-0-applicant_sig\""
+                + " aria-label=\"Applicant Signature\" aria-required=\"true\" role=\"img\" tabindex=\"0\""),
+                "signature capture div with ARIA");
+    }
+
+    @Test
+    void geometricElementsRenderAsSvg() {
+        String formText = """
+                {$}
+                odin = "1.0.0"
+                forms = "1.0.0"
+                title = "Geometric"
+                id = "geo"
+                lang = "en"
+
+                {$.page}
+                width = #8.5
+                height = #11
+                unit = "inch"
+
+                {page[0]}
+                {.circle.seal}
+                cx = #2
+                cy = #2
+                r = #0.75
+                stroke = "#003366"
+                stroke-width = #0.02
+                fill = "#e6f0ff"
+
+                {.ellipse.stamp}
+                cx = #5
+                cy = #2
+                rx = #1
+                ry = #0.5
+                stroke = "#660000"
+                stroke-width = #0.02
+                fill = "none"
+
+                {.polyline.trend}
+                points = "3,4 3.5,4.6 4,4.2 4.5,5 5,4.3"
+                stroke = "#006600"
+                stroke-width = #0.02
+                """;
+        OdinForm form = FormParser.parseForm(formText);
+        assertInstanceOf(CircleElement.class, form.pages().get(0).elements().get(0));
+        assertInstanceOf(EllipseElement.class, form.pages().get(0).elements().get(1));
+        assertInstanceOf(PolylineElement.class, form.pages().get(0).elements().get(2));
+
+        String html = FormRenderer.renderForm(form, null, RenderFormOptions.of(RenderTarget.HTML));
+        assertTrue(html.contains("<circle cx=\"192\" cy=\"192\" r=\"72\" stroke=\"#003366\""), "circle coords");
+        assertTrue(html.contains("<ellipse cx=\"480\" cy=\"192\" rx=\"96\" ry=\"48\" stroke=\"#660000\""), "ellipse coords");
+        assertTrue(html.contains(
+                "<polyline points=\"288,384 336,441.6 384,403.2 432,480 480,412.8\""
+                + " stroke=\"#006600\" stroke-width=\"1.92\" fill=\"none\"/>"), "polyline points");
+    }
 }
