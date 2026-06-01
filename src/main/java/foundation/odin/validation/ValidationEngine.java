@@ -21,6 +21,12 @@ public final class ValidationEngine {
         var opts = options != null ? options : OdinOptions.ValidateOptions.DEFAULT;
         var errors = new ArrayList<OdinSchema.ValidationError>();
 
+        // Validate the schema definition itself (override, intersection, tabular, defaults).
+        SchemaDefinitionValidator.validate(schema, registry, errors);
+        if (opts.isFailFast() && !errors.isEmpty()) {
+            return new OdinSchema.ValidationResult(false, errors);
+        }
+
         // Expand type compositions and field-level typeRefs into concrete fields.
         var expandedFields = expandFields(doc, schema, registry);
 
@@ -80,6 +86,19 @@ public final class ValidationEngine {
                 if (actualPlaces != (nt.decimalPlaces() & 0xFF)) {
                     errors.add(new OdinSchema.ValidationError(path, "V003",
                             "Decimal places mismatch at " + path + ": expected exactly " + (nt.decimalPlaces() & 0xFF)));
+                    if (opts.isFailFast()) return new OdinSchema.ValidationResult(false, errors);
+                    continue;
+                }
+            }
+
+            // Currency precision: #$.N enforces exactly N places (V003); bare #$ defaults to 2.
+            if (schemaField.fieldType() instanceof OdinSchema.SchemaFieldType.CurrencyType ct
+                    && ct.decimalPlaces() != null && docValue instanceof OdinValue.OdinCurrency cur) {
+                int expectedPlaces = ct.decimalPlaces() & 0xFF;
+                int actualPlaces = cur.getDecimalPlaces() & 0xFF;
+                if (actualPlaces != expectedPlaces) {
+                    errors.add(new OdinSchema.ValidationError(path, "V003",
+                            "Currency decimal places mismatch at " + path + ": expected exactly " + expectedPlaces));
                     if (opts.isFailFast()) return new OdinSchema.ValidationResult(false, errors);
                     continue;
                 }
@@ -416,10 +435,7 @@ public final class ValidationEngine {
         }
 
         if (constraint instanceof OdinSchema.SchemaObjectConstraint.Invariant inv) {
-            if (!evaluateInvariant(doc, inv.expression(), objPath)) {
-                return new OdinSchema.ValidationError(objPath, "V008",
-                        "Invariant violated: " + inv.expression());
-            }
+            return validateInvariant(doc, inv.expression(), objPath);
         }
 
         if (constraint instanceof OdinSchema.SchemaObjectConstraint.UniqueArray) {
@@ -430,89 +446,33 @@ public final class ValidationEngine {
         return null;
     }
 
-    private static boolean evaluateInvariant(OdinDocument doc, String expression, String objPath) {
+    // Evaluate an invariant expression. Absent operands make it inapplicable;
+    // a null operand or a false result is a V008 violation; a malformed expression is V008.
+    private static OdinSchema.ValidationError validateInvariant(
+            OdinDocument doc, String expression, String objPath) {
         String expr = expression.trim();
 
-        // A present-but-null operand makes the invariant false.
-        if (hasNullOperand(doc, expr, objPath)) return false;
+        InvariantEvaluator.FieldResolver resolve = name -> {
+            String fullPath = objPath.isEmpty() ? name : objPath + "." + name;
+            return doc.getAssignments().tryGet(fullPath);
+        };
 
-        // Try operators in order of precedence (multi-char first)
-        String[][] ops = {{">=", ">="}, {"<=", "<="}, {"!=", "!="}, {">", ">"}, {"<", "<"}, {" = ", "="}};
-        for (String[] opDef : ops) {
-            String search = opDef[0];
-            String op = opDef[1];
-            int idx = expr.indexOf(search);
-            if (idx > 0) {
-                String lhs = expr.substring(0, idx).trim();
-                String rhs = expr.substring(idx + search.length()).trim();
-
-                double lhsVal = resolveInvariantValue(doc, lhs, objPath);
-                double rhsVal = resolveInvariantValue(doc, rhs, objPath);
-
-                if (Double.isNaN(lhsVal) || Double.isNaN(rhsVal)) return true;
-
-                return switch (op) {
-                    case ">=" -> lhsVal >= rhsVal;
-                    case "<=" -> lhsVal <= rhsVal;
-                    case ">" -> lhsVal > rhsVal;
-                    case "<" -> lhsVal < rhsVal;
-                    case "!=" -> lhsVal != rhsVal;
-                    case "=" -> Math.abs(lhsVal - rhsVal) < 0.001;
-                    default -> true;
-                };
-            }
-        }
-        return true;
-    }
-
-    private static final Set<String> INVARIANT_KEYWORDS = Set.of("true", "false");
-
-    // Any field operand referenced by the expression that is present with a null value.
-    private static boolean hasNullOperand(OdinDocument doc, String expr, String objPath) {
-        var matcher = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*").matcher(expr);
-        while (matcher.find()) {
-            String token = matcher.group();
-            if (INVARIANT_KEYWORDS.contains(token)) continue;
-            String fullPath = objPath.isEmpty() ? token : objPath + "." + token;
-            OdinValue v = doc.getAssignments().tryGet(fullPath);
-            if (v instanceof OdinValue.OdinNull) return true;
-        }
-        return false;
-    }
-
-    private static double resolveInvariantValue(OdinDocument doc, String expr, String objPath) {
-        // Handle arithmetic: "subtotal + tax"
-        if (expr.contains(" + ")) {
-            String[] parts = expr.split("\\s*\\+\\s*");
-            double sum = 0;
-            for (String part : parts) {
-                double val = resolveInvariantValue(doc, part.trim(), objPath);
-                if (Double.isNaN(val)) return Double.NaN;
-                sum += val;
-            }
-            return sum;
-        }
-        if (expr.contains(" - ")) {
-            String[] parts = expr.split("\\s*-\\s*", 2);
-            double left = resolveInvariantValue(doc, parts[0].trim(), objPath);
-            double right = resolveInvariantValue(doc, parts[1].trim(), objPath);
-            if (Double.isNaN(left) || Double.isNaN(right)) return Double.NaN;
-            return left - right;
+        InvariantEvaluator.InvariantResult result;
+        try {
+            result = InvariantEvaluator.evaluate(expr, resolve);
+        } catch (RuntimeException e) {
+            return new OdinSchema.ValidationError(objPath, "V008",
+                    "Invalid invariant expression: " + expr);
         }
 
-        // Try as number literal
-        try { return Double.parseDouble(expr); } catch (NumberFormatException ignored) {}
+        // Absent operands: invariant does not apply.
+        if (result.value() == null && !result.nullOperand()) return null;
 
-        // Try as field reference
-        String fullPath = objPath.isEmpty() ? expr : objPath + "." + expr;
-        OdinValue val = doc.getAssignments().tryGet(fullPath);
-        if (val == null) return Double.NaN;
-
-        if (val instanceof OdinValue.OdinInteger i) return (double) i.getValue();
-        if (val instanceof OdinValue.OdinNumber n) return n.getValue();
-        if (val instanceof OdinValue.OdinCurrency c) return c.getValue();
-        if (val instanceof OdinValue.OdinPercent p) return p.getValue();
-        return Double.NaN;
+        if (Boolean.FALSE.equals(result.value())) {
+            return new OdinSchema.ValidationError(objPath, "V008",
+                    "Invariant violated: " + expr);
+        }
+        return null;
     }
 
     private static OdinSchema.ValidationError validateUniqueArray(OdinDocument doc, String arrayPath) {

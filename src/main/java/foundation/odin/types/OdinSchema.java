@@ -32,7 +32,12 @@ public final class OdinSchema {
         }
     }
 
-    public record SchemaArray(String name, SchemaFieldType itemType, Long minItems, Long maxItems) {}
+    public record SchemaArray(String name, SchemaFieldType itemType, Long minItems, Long maxItems,
+            List<String> columns, Map<String, SchemaField> itemFields) {
+        public SchemaArray(String name, SchemaFieldType itemType, Long minItems, Long maxItems) {
+            this(name, itemType, minItems, maxItems, List.of(), new LinkedHashMap<>());
+        }
+    }
 
     // ── Schema Field ──
 
@@ -94,7 +99,9 @@ public final class OdinSchema {
         record UnionType(List<SchemaFieldType> types) implements SchemaFieldType {}
         record ReferenceType(String target) implements SchemaFieldType {}
         record BinaryType() implements SchemaFieldType {}
-        record TypeRefType(String name) implements SchemaFieldType {}
+        record TypeRefType(String name, boolean override) implements SchemaFieldType {
+            public TypeRefType(String name) { this(name, false); }
+        }
     }
 
     // ── Schema Constraints ──

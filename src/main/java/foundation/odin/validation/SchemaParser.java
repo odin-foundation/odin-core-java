@@ -63,14 +63,27 @@ public final class SchemaParser {
 
                 // Absolute header resets the relative sub-path context.
                 currentTypeSubPath = "";
-                if (headerContent.endsWith("[]")) {
-                    currentHeader = headerContent.substring(0, headerContent.length() - 2);
+                // Tabular array header: {path[] : col1, col2}
+                int tabColon = headerContent.indexOf("[] :");
+                if (headerContent.endsWith("[]") || tabColon >= 0) {
+                    List<String> columns = List.of();
+                    if (tabColon >= 0) {
+                        currentHeader = headerContent.substring(0, tabColon).trim();
+                        columns = parseFieldList(headerContent.substring(tabColon + 4).trim());
+                    } else {
+                        currentHeader = headerContent.substring(0, headerContent.length() - 2);
+                    }
                     currentIsArray = true;
                     previousHeaderPath = currentHeader;
                     previousHeaderType = "";
                     // Ensure array entry exists (may be updated by bounds later)
-                    arrays.putIfAbsent(currentHeader, new OdinSchema.SchemaArray(currentHeader,
-                            new OdinSchema.SchemaFieldType.StringType(), null, null));
+                    var existing = arrays.get(currentHeader);
+                    arrays.put(currentHeader, new OdinSchema.SchemaArray(currentHeader,
+                            new OdinSchema.SchemaFieldType.StringType(),
+                            existing != null ? existing.minItems() : null,
+                            existing != null ? existing.maxItems() : null,
+                            columns,
+                            existing != null ? existing.itemFields() : new LinkedHashMap<>()));
                 } else {
                     currentHeader = headerContent;
                     currentIsArray = false;
@@ -140,6 +153,7 @@ public final class SchemaParser {
             // Type composition / intersection: = @a & @b
             if (line.startsWith("=") && line.contains("@")) {
                 String rhs = line.substring(1).trim();
+                boolean override = rhs.contains(":override");
                 var refs = new ArrayList<String>();
                 for (String part : rhs.split("&")) {
                     String p = part.trim();
@@ -152,7 +166,7 @@ public final class SchemaParser {
                 if (!refs.isEmpty()) {
                     String joined = String.join("&", refs);
                     var compField = new OdinSchema.SchemaField("_composition",
-                            new OdinSchema.SchemaFieldType.TypeRefType(joined));
+                            new OdinSchema.SchemaFieldType.TypeRefType(joined, override));
                     String headerPrefix = currentHeader != null ? currentHeader : "";
                     if (headerPrefix.startsWith("@")) {
                         var typeEntry = types.get(headerPrefix.substring(1));
@@ -210,6 +224,11 @@ public final class SchemaParser {
                     fullPath = cleanFieldName;
                 }
                 fields.put(fullPath, field);
+                // Array item fields also feed the array's column-type checks.
+                if (currentIsArray) {
+                    var arr = arrays.get(headerPrefix);
+                    if (arr != null) arr.itemFields().put(cleanFieldName, field);
+                }
             }
         }
 
@@ -357,7 +376,7 @@ public final class SchemaParser {
                 String enumStr = s.substring(1, closeParen);
                 var values = new ArrayList<String>();
                 for (String v : enumStr.split(",")) {
-                    String trimmed = v.trim();
+                    String trimmed = stripQuotes(v.trim());
                     if (!trimmed.isEmpty()) values.add(trimmed);
                 }
                 constraints.add(new OdinSchema.SchemaConstraint.Enum(values));
@@ -406,13 +425,15 @@ public final class SchemaParser {
                     s = s.substring(lastSlash + 1).trim();
                 } else break;
             } else if (s.startsWith(":if ")) {
-                // Conditional: :if field = value
+                // Conditional: :if field = value (consumes the rest of the spec)
                 String condStr = s.substring(4).trim();
                 parseConditional(condStr, conditionals, false);
+                s = "";
                 break;
             } else if (s.startsWith(":unless ")) {
                 String condStr = s.substring(8).trim();
                 parseConditional(condStr, conditionals, true);
+                s = "";
                 break;
             } else if (s.startsWith(":optional")) {
                 required = false;
@@ -554,7 +575,18 @@ public final class SchemaParser {
     private static TypeParse parseBaseType(String s) {
         if (s.startsWith("##")) return new TypeParse(new OdinSchema.SchemaFieldType.IntegerType(), s.substring(2));
         if (s.startsWith("#%")) return new TypeParse(new OdinSchema.SchemaFieldType.PercentType(), s.substring(2));
-        if (s.startsWith("#$")) return new TypeParse(new OdinSchema.SchemaFieldType.CurrencyType(null), s.substring(2));
+        if (s.startsWith("#$")) {
+            // Currency precision: #$.N enforces exactly N places
+            String rest = s.substring(2);
+            if (rest.startsWith(".") && rest.length() > 1 && Character.isDigit(rest.charAt(1))) {
+                int i = 1;
+                while (i < rest.length() && Character.isDigit(rest.charAt(i))) i++;
+                Byte places = (byte) Integer.parseInt(rest.substring(1, i));
+                return new TypeParse(new OdinSchema.SchemaFieldType.CurrencyType(places), rest.substring(i));
+            }
+            // Bare #$ defaults to two decimal places.
+            return new TypeParse(new OdinSchema.SchemaFieldType.CurrencyType((byte) 2), rest);
+        }
         if (s.startsWith("#")) {
             // Decimal precision: #.N enforces exactly N places
             String rest = s.substring(1);
