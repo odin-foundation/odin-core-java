@@ -64,7 +64,8 @@ public final class GeoVerbs {
                 radius = EARTH_RADIUS_MILES;
                 break;
             default:
-                // T011_INCOMPATIBLE_CONVERSION - unknown unit
+                if (ctx != null) ctx.addError(foundation.odin.types.OdinErrors.incompatibleConversionError(
+                        "distance", "unknown unit '" + unit + "' (expected 'km', 'mi', or 'miles')"));
                 return DynValue.ofNull();
         }
 
@@ -141,9 +142,9 @@ public final class GeoVerbs {
         );
         double midLon = lon1Rad + Math.atan2(by, Math.cos(lat1Rad) + bx);
 
-        var result = new ArrayList<DynValue>();
-        result.add(DynValue.ofFloat(midLat * RAD_TO_DEG));
-        result.add(DynValue.ofFloat(midLon * RAD_TO_DEG));
-        return DynValue.ofArray(result);
+        var entries = new ArrayList<Map.Entry<String, DynValue>>();
+        entries.add(Map.entry("lat", DynValue.ofFloat(midLat * RAD_TO_DEG)));
+        entries.add(Map.entry("lon", DynValue.ofFloat(midLon * RAD_TO_DEG)));
+        return DynValue.ofObject(entries);
     }
 }

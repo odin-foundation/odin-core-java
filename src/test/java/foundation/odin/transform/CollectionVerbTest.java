@@ -564,15 +564,19 @@ class CollectionVerbTest {
 
     @Test
     void find_firstTruthy() {
-        var data = Arr(Null(), I(0), S("found"), I(99));
-        var result = invoke("find", data);
-        assertEquals("found", result.asString());
+        var data = Arr(
+            Obj(e("n", S("a")), e("v", S("no"))),
+            Obj(e("n", S("found")), e("v", S("yes"))),
+            Obj(e("n", S("c")), e("v", S("yes")))
+        );
+        var result = invoke("find", data, S("v"), S("="), S("yes"));
+        assertEquals("found", result.get("n").asString());
     }
 
     @Test
     void find_noMatchReturnsNull() {
-        var data = Arr(Null(), I(0), S(""));
-        assertTrue(invoke("find", data).isNull());
+        var data = Arr(Obj(e("v", S("no"))), Obj(e("v", S("nope"))));
+        assertTrue(invoke("find", data, S("v"), S("="), S("yes")).isNull());
     }
 
     @Test
@@ -581,13 +585,13 @@ class CollectionVerbTest {
             Obj(e("n", S("a")), e("v", I(0))),
             Obj(e("n", S("b")), e("v", I(1)))
         );
-        var result = invoke("find", data, S("v"));
+        var result = invoke("find", data, S("v"), S("="), I(1));
         assertEquals("b", result.get("n").asString());
     }
 
     @Test
     void find_emptyArray() {
-        assertTrue(invoke("find", Arr()).isNull());
+        assertTrue(invoke("find", Arr(), S("v"), S("="), S("x")).isNull());
     }
 
     // =========================================================================
@@ -596,19 +600,21 @@ class CollectionVerbTest {
 
     @Test
     void findIndex_found() {
-        var data = Arr(Null(), I(0), I(1));
-        assertEquals(2, invoke("findIndex", data).asInt64());
+        var data = Arr(
+            Obj(e("s", S("a"))), Obj(e("s", S("b"))), Obj(e("s", S("hit")))
+        );
+        assertEquals(2, invoke("findIndex", data, S("s"), S("="), S("hit")).asInt64());
     }
 
     @Test
     void findIndex_notFound() {
-        var data = Arr(Null(), I(0));
-        assertEquals(-1, invoke("findIndex", data).asInt64());
+        var data = Arr(Obj(e("s", S("a"))), Obj(e("s", S("b"))));
+        assertEquals(-1, invoke("findIndex", data, S("s"), S("="), S("hit")).asInt64());
     }
 
     @Test
     void findIndex_emptyArray() {
-        assertEquals(-1, invoke("findIndex", Arr()).asInt64());
+        assertEquals(-1, invoke("findIndex", Arr(), S("s"), S("="), S("x")).asInt64());
     }
 
     // =========================================================================
@@ -733,16 +739,16 @@ class CollectionVerbTest {
             Obj(e("color", S("red")), e("n", I(3)))
         );
         var result = invoke("groupBy", data, S("color"));
-        var obj = result.asObject();
-        assertEquals(2, obj.size());
-        assertEquals("red", obj.get(0).getKey());
-        assertEquals("blue", obj.get(1).getKey());
+        var groups = result.asArray();
+        assertEquals(2, groups.size());
+        assertEquals("red", groups.get(0).get("key").asString());
+        assertEquals("blue", groups.get(1).get("key").asString());
     }
 
     @Test
     void groupBy_emptyArray() {
         var result = invoke("groupBy", Arr(), S("key"));
-        assertTrue(result.asObject().isEmpty());
+        assertTrue(result.asArray().isEmpty());
     }
 
     @Test
@@ -752,7 +758,7 @@ class CollectionVerbTest {
             Obj(e("type", S("A")), e("v", I(2)))
         );
         var result = invoke("groupBy", data, S("type"));
-        assertEquals(1, result.asObject().size());
+        assertEquals(1, result.asArray().size());
     }
 
     @Test
@@ -762,7 +768,7 @@ class CollectionVerbTest {
             Obj(e("type", S("A")), e("v", I(2)))
         );
         var result = invoke("groupBy", data, S("type"));
-        assertEquals(2, result.asObject().size());
+        assertEquals(2, result.asArray().size());
     }
 
     @Test
@@ -773,7 +779,7 @@ class CollectionVerbTest {
             Obj(e("score", I(10)))
         );
         var result = invoke("groupBy", data, S("score"));
-        assertEquals(2, result.asObject().size());
+        assertEquals(2, result.asArray().size());
     }
 
     // =========================================================================
@@ -782,33 +788,36 @@ class CollectionVerbTest {
 
     @Test
     void partition_splits() {
-        var data = Arr(I(1), I(0), I(3), Null());
-        var result = invoke("partition", data);
+        var data = Arr(
+            Obj(e("s", S("on"))), Obj(e("s", S("off"))),
+            Obj(e("s", S("on"))), Obj(e("s", S("off")))
+        );
+        var result = invoke("partition", data, S("s"), S("="), S("on"));
         var parts = result.asArray();
         assertEquals(2, parts.size());
-        assertEquals(2, parts.get(0).asArray().size()); // truthy: 1, 3
-        assertEquals(2, parts.get(1).asArray().size()); // falsy: 0, null
+        assertEquals(2, parts.get(0).asArray().size());
+        assertEquals(2, parts.get(1).asArray().size());
     }
 
     @Test
     void partition_allTruthy() {
-        var data = Arr(I(1), I(2));
-        var result = invoke("partition", data);
+        var data = Arr(Obj(e("s", S("on"))), Obj(e("s", S("on"))));
+        var result = invoke("partition", data, S("s"), S("="), S("on"));
         assertEquals(2, result.asArray().get(0).asArray().size());
         assertTrue(result.asArray().get(1).asArray().isEmpty());
     }
 
     @Test
     void partition_allFalsy() {
-        var data = Arr(I(0), Null());
-        var result = invoke("partition", data);
+        var data = Arr(Obj(e("s", S("off"))), Obj(e("s", S("off"))));
+        var result = invoke("partition", data, S("s"), S("="), S("on"));
         assertTrue(result.asArray().get(0).asArray().isEmpty());
         assertEquals(2, result.asArray().get(1).asArray().size());
     }
 
     @Test
     void partition_empty() {
-        var result = invoke("partition", Arr());
+        var result = invoke("partition", Arr(), S("s"), S("="), S("on"));
         assertTrue(result.asArray().get(0).asArray().isEmpty());
         assertTrue(result.asArray().get(1).asArray().isEmpty());
     }
@@ -1037,26 +1046,29 @@ class CollectionVerbTest {
 
     @Test
     void dedupe_consecutiveDuplicates() {
-        var data = Arr(I(1), I(1), I(2), I(2), I(3));
-        var result = invoke("dedupe", data);
+        var data = Arr(
+            Obj(e("id", I(1))), Obj(e("id", I(1))), Obj(e("id", I(2))),
+            Obj(e("id", I(2))), Obj(e("id", I(3)))
+        );
+        var result = invoke("dedupe", data, S("id"));
         assertEquals(3, result.asArray().size());
     }
 
     @Test
     void dedupe_noDuplicates() {
-        var data = Arr(I(1), I(2), I(3));
-        assertEquals(3, invoke("dedupe", data).asArray().size());
+        var data = Arr(Obj(e("id", I(1))), Obj(e("id", I(2))), Obj(e("id", I(3))));
+        assertEquals(3, invoke("dedupe", data, S("id")).asArray().size());
     }
 
     @Test
-    void dedupe_nonConsecutiveDuplicatesKept() {
-        var data = Arr(I(1), I(2), I(1));
-        assertEquals(3, invoke("dedupe", data).asArray().size());
+    void dedupe_nonConsecutiveDuplicatesRemoved() {
+        var data = Arr(Obj(e("id", I(1))), Obj(e("id", I(2))), Obj(e("id", I(1))));
+        assertEquals(2, invoke("dedupe", data, S("id")).asArray().size());
     }
 
     @Test
     void dedupe_emptyArray() {
-        assertTrue(invoke("dedupe", Arr()).asArray().isEmpty());
+        assertTrue(invoke("dedupe", Arr(), S("id")).asArray().isEmpty());
     }
 
     // =========================================================================
@@ -1653,22 +1665,23 @@ class CollectionVerbTest {
     void rank_basic() {
         var result = invoke("rank", Arr(I(10), I(30), I(20)));
         // Highest=rank 1 (descending). 30->1, 20->2, 10->3
-        assertEquals(3, result.asArray().get(0).asInt64()); // 10 -> rank 3
-        assertEquals(1, result.asArray().get(1).asInt64()); // 30 -> rank 1
-        assertEquals(2, result.asArray().get(2).asInt64()); // 20 -> rank 2
+        assertEquals(3, result.asArray().get(0).get("_rank").asInt64()); // 10 -> rank 3
+        assertEquals(1, result.asArray().get(1).get("_rank").asInt64()); // 30 -> rank 1
+        assertEquals(2, result.asArray().get(2).get("_rank").asInt64()); // 20 -> rank 2
     }
 
     @Test
     void rank_tiedValues() {
         var result = invoke("rank", Arr(I(10), I(10), I(30)));
         // Both 10s get same rank
-        assertEquals(result.asArray().get(0).asInt64(), result.asArray().get(1).asInt64());
+        assertEquals(result.asArray().get(0).get("_rank").asInt64(),
+                     result.asArray().get(1).get("_rank").asInt64());
     }
 
     @Test
     void rank_singleElement() {
         var result = invoke("rank", Arr(I(42)));
-        assertEquals(1, result.asArray().get(0).asInt64());
+        assertEquals(1, result.asArray().get(0).get("_rank").asInt64());
     }
 
     // =========================================================================
@@ -1774,12 +1787,12 @@ class CollectionVerbTest {
 
     @Test
     void rowNumber_increments() {
-        var freshCtx = new TransformEngine.VerbContext();
-        var reg = new VerbRegistry();
-        var r1 = reg.invoke("rowNumber", new DynValue[]{}, freshCtx);
-        var r2 = reg.invoke("rowNumber", new DynValue[]{}, freshCtx);
-        assertEquals(1, r1.asInt64());
-        assertEquals(2, r2.asInt64());
+        var result = invoke("rowNumber", Arr(S("alice"), S("bob")));
+        var rows = result.asArray();
+        assertEquals(1, rows.get(0).get("_rowNum").asInt64());
+        assertEquals("alice", rows.get(0).get("value").asString());
+        assertEquals(2, rows.get(1).get("_rowNum").asInt64());
+        assertEquals("bob", rows.get(1).get("value").asString());
     }
 
     // =========================================================================

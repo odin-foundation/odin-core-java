@@ -348,29 +348,62 @@ public final class CollectionVerbs {
     }
 
     private static DynValue find(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofNull();
+        if (args.length < 4) return DynValue.ofNull();
         var arr = extractArray(args[0]);
-        String fieldName = args.length >= 2 ? args[1].asString() : null;
+        String fieldName = args[1].asString();
+        String op = args[2].asString();
+        DynValue compareValue = args[3];
 
         for (DynValue item : arr) {
-            DynValue testVal = fieldName != null ? getField(item, fieldName) : item;
-            if (isTruthy(testVal)) return item;
+            if (matchesCondition(item, fieldName, op, compareValue)) return item;
         }
-
         return DynValue.ofNull();
     }
 
     private static DynValue findIndex(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofInteger(-1);
+        if (args.length < 4) return DynValue.ofInteger(-1);
         var arr = extractArray(args[0]);
-        String fieldName = args.length >= 2 ? args[1].asString() : null;
+        String fieldName = args[1].asString();
+        String op = args[2].asString();
+        DynValue compareValue = args[3];
 
         for (int i = 0; i < arr.size(); i++) {
-            DynValue testVal = fieldName != null ? getField(arr.get(i), fieldName) : arr.get(i);
-            if (isTruthy(testVal)) return DynValue.ofInteger(i);
+            if (matchesCondition(arr.get(i), fieldName, op, compareValue))
+                return DynValue.ofInteger(i);
         }
-
         return DynValue.ofInteger(-1);
+    }
+
+    // Field-comparison predicate shared by filter/find/findIndex/partition/some/every.
+    private static boolean matchesCondition(DynValue item, String fieldName, String op, DynValue compareValue) {
+        if (fieldName == null || op == null) return false;
+        DynValue fieldVal = getField(item, fieldName);
+        String fieldStr = fieldVal.asString() != null ? fieldVal.asString() : fieldVal.toString();
+        String cmpStr = compareValue.asString() != null ? compareValue.asString() : compareValue.toString();
+        return switch (op) {
+            case "=", "==" -> fieldStr.equals(cmpStr);
+            case "!=", "<>" -> !fieldStr.equals(cmpStr);
+            case "<" -> {
+                Double a = toDouble(fieldVal), b = toDouble(compareValue);
+                yield a != null && b != null && a < b;
+            }
+            case "<=" -> {
+                Double a = toDouble(fieldVal), b = toDouble(compareValue);
+                yield a != null && b != null && a <= b;
+            }
+            case ">" -> {
+                Double a = toDouble(fieldVal), b = toDouble(compareValue);
+                yield a != null && b != null && a > b;
+            }
+            case ">=" -> {
+                Double a = toDouble(fieldVal), b = toDouble(compareValue);
+                yield a != null && b != null && a >= b;
+            }
+            case "contains" -> fieldStr.contains(cmpStr);
+            case "startsWith" -> fieldStr.startsWith(cmpStr);
+            case "endsWith" -> fieldStr.endsWith(cmpStr);
+            default -> false;
+        };
     }
 
     private static DynValue includes(DynValue[] args, VerbContext ctx) {
@@ -431,25 +464,29 @@ public final class CollectionVerbs {
             groups.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
         }
 
-        var entries = new ArrayList<Map.Entry<String, DynValue>>();
+        var result = new ArrayList<DynValue>();
         for (var e : groups.entrySet()) {
-            entries.add(Map.entry(e.getKey(), DynValue.ofArray(e.getValue())));
+            var entries = new ArrayList<Map.Entry<String, DynValue>>();
+            entries.add(Map.entry("key", DynValue.ofString(e.getKey())));
+            entries.add(Map.entry("items", DynValue.ofArray(e.getValue())));
+            result.add(DynValue.ofObject(entries));
         }
 
-        return DynValue.ofObject(entries);
+        return DynValue.ofArray(result);
     }
 
     private static DynValue partition(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofNull();
+        if (args.length < 4) return DynValue.ofNull();
         var arr = extractArray(args[0]);
-        String fieldName = args.length >= 2 ? args[1].asString() : null;
+        String fieldName = args[1].asString();
+        String op = args[2].asString();
+        DynValue compareValue = args[3];
 
         var pass = new ArrayList<DynValue>();
         var fail = new ArrayList<DynValue>();
 
         for (DynValue item : arr) {
-            DynValue testVal = fieldName != null ? getField(item, fieldName) : item;
-            if (isTruthy(testVal)) pass.add(item);
+            if (matchesCondition(item, fieldName, op, compareValue)) pass.add(item);
             else fail.add(item);
         }
 
@@ -565,14 +602,26 @@ public final class CollectionVerbs {
     }
 
     private static DynValue rowNumber(DynValue[] args, VerbContext ctx) {
-        long current = 0;
-        if (ctx != null && ctx.getAccumulators().containsKey("_rowNumber")) {
-            Long val = ctx.getAccumulators().get("_rowNumber").asInt64();
-            if (val != null) current = val;
+        if (args.length == 0) return DynValue.ofNull();
+        var arr = extractArray(args[0]);
+        var result = new ArrayList<DynValue>();
+        for (int i = 0; i < arr.size(); i++) {
+            result.add(withLeadingField("_rowNum", DynValue.ofInteger(i + 1), arr.get(i)));
         }
-        current++;
-        if (ctx != null) ctx.getAccumulators().put("_rowNumber", DynValue.ofInteger(current));
-        return DynValue.ofInteger(current);
+        return DynValue.ofArray(result);
+    }
+
+    // Build {field: value, ...item} when item is an object, else {field: value, value: item}.
+    private static DynValue withLeadingField(String field, DynValue value, DynValue item) {
+        var entries = new ArrayList<Map.Entry<String, DynValue>>();
+        entries.add(Map.entry(field, value));
+        if (item.getType() == DynValue.Type.Object) {
+            var obj = item.asObject();
+            if (obj != null) for (var e : obj) entries.add(Map.entry(e.getKey(), e.getValue()));
+        } else {
+            entries.add(Map.entry("value", item));
+        }
+        return DynValue.ofObject(entries);
     }
 
     private static DynValue sample(DynValue[] args, VerbContext ctx) {
@@ -617,18 +666,23 @@ public final class CollectionVerbs {
     }
 
     private static DynValue dedupe(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofNull();
+        if (args.length < 2) return DynValue.ofNull();
         var arr = extractArray(args[0]);
-        if (arr.isEmpty()) return DynValue.ofArray(new ArrayList<>());
+        String keyField = args[1].asString();
 
+        var seen = new HashSet<String>();
         var result = new ArrayList<DynValue>();
-        result.add(arr.get(0));
-
-        for (int i = 1; i < arr.size(); i++) {
-            if (!areEqual(arr.get(i), arr.get(i - 1)))
-                result.add(arr.get(i));
+        for (DynValue item : arr) {
+            String keyValue;
+            if (item.getType() == DynValue.Type.Object) {
+                DynValue fieldValue = getField(item, keyField);
+                if (fieldValue.isNull()) { result.add(item); continue; }
+                keyValue = fieldValue.asString() != null ? fieldValue.asString() : fieldValue.toString();
+            } else {
+                keyValue = item.asString() != null ? item.asString() : item.toString();
+            }
+            if (seen.add(keyValue)) result.add(item);
         }
-
         return DynValue.ofArray(result);
     }
 
@@ -762,26 +816,47 @@ public final class CollectionVerbs {
     private static DynValue rank(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
         var arr = extractArray(args[0]);
+        String fieldName = args.length > 1 ? args[1].asString() : null;
+        String direction = args.length > 2 && args[2].asString() != null
+                ? args[2].asString().toLowerCase() : "desc";
+        int mult = "asc".equals(direction) ? 1 : -1;
 
-        var indexed = new ArrayList<double[]>();
-        for (int i = 0; i < arr.size(); i++) {
-            Double v = toDouble(arr.get(i));
-            if (v != null) indexed.add(new double[]{v, i});
+        // Comparable value per element.
+        var vals = new ArrayList<DynValue>();
+        for (DynValue item : arr) {
+            vals.add(fieldName != null && item.getType() == DynValue.Type.Object
+                    ? getField(item, fieldName) : item);
         }
 
-        indexed.sort((a, b) -> Double.compare(b[0], a[0]));
+        var order = new ArrayList<Integer>();
+        for (int i = 0; i < arr.size(); i++) order.add(i);
+        final int m = mult;
+        order.sort((a, b) -> {
+            Double av = toDouble(vals.get(a)), bv = toDouble(vals.get(b));
+            if (av != null && bv != null) return Double.compare(av, bv) * m;
+            String as = vals.get(a).asString(), bs = vals.get(b).asString();
+            return (as != null ? as : "").compareTo(bs != null ? bs : "") * m;
+        });
 
-        var result = new DynValue[arr.size()];
-        Arrays.fill(result, DynValue.ofNull());
-
+        var ranks = new int[arr.size()];
         int currentRank = 1;
-        for (int i = 0; i < indexed.size(); i++) {
-            if (i > 0 && indexed.get(i)[0] != indexed.get(i - 1)[0])
+        for (int i = 0; i < order.size(); i++) {
+            if (i > 0 && !sameRankValue(vals.get(order.get(i)), vals.get(order.get(i - 1))))
                 currentRank = i + 1;
-            result[(int) indexed.get(i)[1]] = DynValue.ofInteger(currentRank);
+            ranks[order.get(i)] = currentRank;
         }
 
-        return DynValue.ofArray(new ArrayList<>(Arrays.asList(result)));
+        var result = new ArrayList<DynValue>();
+        for (int i = 0; i < arr.size(); i++) {
+            result.add(withLeadingField("_rank", DynValue.ofInteger(ranks[i]), arr.get(i)));
+        }
+        return DynValue.ofArray(result);
+    }
+
+    private static boolean sameRankValue(DynValue a, DynValue b) {
+        Double ad = toDouble(a), bd = toDouble(b);
+        if (ad != null && bd != null) return ad.doubleValue() == bd.doubleValue();
+        return Objects.equals(a.asString(), b.asString());
     }
 
     private static DynValue fillMissing(DynValue[] args, VerbContext ctx) {

@@ -397,15 +397,15 @@ class NumericVerbExtendedTest {
     @Test void clamp_AboveMax() { assertNumeric(invoke("clamp", F(15.0), F(0.0), F(10.0)), 10.0, 1e-10); }
 
     @Test void interpolate_Midpoint() {
-        assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(0.5)), 50.0, 1e-10);
+        assertNumeric(invoke("interpolate", F(5.0), F(0.0), F(100.0), F(10.0), F(200.0)), 150.0, 1e-10);
     }
 
     @Test void interpolate_AtStart() {
-        assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(0.0)), 0.0, 1e-10);
+        assertNumeric(invoke("interpolate", F(0.0), F(0.0), F(100.0), F(10.0), F(200.0)), 100.0, 1e-10);
     }
 
     @Test void interpolate_AtEnd() {
-        assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(1.0)), 100.0, 1e-10);
+        assertNumeric(invoke("interpolate", F(10.0), F(0.0), F(100.0), F(10.0), F(200.0)), 200.0, 1e-10);
     }
 
     @Test void interpolate_MissingArgs() { assertTrue(invoke("interpolate", F(0.0), F(100.0)).isNull()); }
@@ -499,17 +499,17 @@ class NumericVerbExtendedTest {
     // =========================================================================
 
     @Test void zscore_AtMean() {
-        assertNumeric(invoke("zscore", F(3.0), F(3.0), F(2.0)), 0.0, 1e-10);
+        assertNumeric(invoke("zscore", F(3.0), Arr(F(1.0), F(3.0), F(5.0))), 0.0, 1e-10);
     }
 
     @Test void zscore_AboveMean() {
-        // zscore(value=5, mean=3, stddev=2) = (5-3)/2 = 1.0
-        DynValue result = invoke("zscore", F(5.0), F(3.0), F(2.0));
-        assertNumeric(result, 1.0, 1e-10);
+        // zscore(value=5, dataset=[1,3,5])
+        DynValue result = invoke("zscore", F(5.0), Arr(F(1.0), F(3.0), F(5.0)));
+        assertNumeric(result, 2.0 / Math.sqrt(8.0 / 3.0), 1e-10);
     }
 
     @Test void zscore_AllSame() {
-        assertTrue(invoke("zscore", F(5.0), F(5.0), F(0.0)).isNull());
+        assertTrue(invoke("zscore", F(5.0), Arr(F(5.0), F(5.0), F(5.0))).isNull());
     }
 
     // =========================================================================

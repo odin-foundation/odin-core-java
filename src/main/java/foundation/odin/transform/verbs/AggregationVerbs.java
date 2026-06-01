@@ -202,7 +202,7 @@ public final class AggregationVerbs {
             if (v != null) { s += v; c++; }
         }
         if (c == 0) return DynValue.ofNull();
-        return DynValue.ofFloat(s / c);
+        return numericResult(s / c);
     }
 
     private static DynValue first(DynValue[] args, VerbContext ctx) {

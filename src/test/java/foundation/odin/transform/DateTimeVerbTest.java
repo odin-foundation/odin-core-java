@@ -148,16 +148,16 @@ class DateTimeVerbTest {
     // =========================================================================
 
     @Test
-    void parseTimestamp_IsoFormat() {
-        DynValue result = invoke("parseTimestamp", S("2024-03-15T14:30:00Z"));
+    void parseTimestamp_PatternFormat() {
+        DynValue result = invoke("parseTimestamp", S("2024-03-15 14:30:00"), S("YYYY-MM-DD HH:mm:ss"));
         String s = result.asString();
         assertNotNull(s);
-        assertTrue(s.contains("2024-03-15"));
+        assertEquals("2024-03-15T14:30:00", s);
     }
 
     @Test
     void parseTimestamp_NullInput() {
-        assertTrue(invoke("parseTimestamp", Null()).isNull());
+        assertTrue(invoke("parseTimestamp", Null(), S("YYYY-MM-DD HH:mm:ss")).isNull());
     }
 
     // =========================================================================
@@ -733,9 +733,9 @@ class DateTimeVerbTest {
     // =========================================================================
 
     @Test
-    void sequence_DefaultZero() {
+    void sequence_DefaultStartsAtOne() {
         DynValue result = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("counter") }, new TransformEngine.VerbContext());
-        assertEquals(0L, result.asInt64());
+        assertEquals(1L, result.asInt64());
     }
 
     @Test
@@ -744,9 +744,9 @@ class DateTimeVerbTest {
         DynValue r1 = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("inc_counter") }, ctx);
         DynValue r2 = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("inc_counter") }, ctx);
         DynValue r3 = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("inc_counter") }, ctx);
-        assertEquals(0L, r1.asInt64());
-        assertEquals(1L, r2.asInt64());
-        assertEquals(2L, r3.asInt64());
+        assertEquals(1L, r1.asInt64());
+        assertEquals(2L, r2.asInt64());
+        assertEquals(3L, r3.asInt64());
     }
 
     @Test
@@ -755,9 +755,9 @@ class DateTimeVerbTest {
         DynValue a1 = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("seq_a") }, ctx);
         DynValue b1 = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("seq_b") }, ctx);
         DynValue a2 = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("seq_a") }, ctx);
-        assertEquals(0L, a1.asInt64());
-        assertEquals(0L, b1.asInt64());
-        assertEquals(1L, a2.asInt64());
+        assertEquals(1L, a1.asInt64());
+        assertEquals(1L, b1.asInt64());
+        assertEquals(2L, a2.asInt64());
     }
 
     @Test
@@ -765,9 +765,10 @@ class DateTimeVerbTest {
         var ctx = new TransformEngine.VerbContext();
         TransformEngine.invokeVerb("sequence", new DynValue[]{ S("reset_counter") }, ctx);
         TransformEngine.invokeVerb("sequence", new DynValue[]{ S("reset_counter") }, ctx);
+        // resetSequence sets the last-returned value; the next sequence returns reset + 1.
         TransformEngine.invokeVerb("resetSequence", new DynValue[]{ S("reset_counter") }, ctx);
         DynValue result = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("reset_counter") }, ctx);
-        assertEquals(0L, result.asInt64());
+        assertEquals(1L, result.asInt64());
     }
 
     @Test
@@ -775,7 +776,7 @@ class DateTimeVerbTest {
         var ctx = new TransformEngine.VerbContext();
         TransformEngine.invokeVerb("resetSequence", new DynValue[]{ S("custom_counter"), I(10) }, ctx);
         DynValue result = TransformEngine.invokeVerb("sequence", new DynValue[]{ S("custom_counter") }, ctx);
-        assertEquals(10L, result.asInt64());
+        assertEquals(11L, result.asInt64());
     }
 
     // =========================================================================
@@ -916,17 +917,15 @@ class DateTimeVerbTest {
     @Test
     void midpoint_SamePoint() {
         DynValue result = invoke("midpoint", F(40.0), F(-74.0), F(40.0), F(-74.0));
-        var arr = result.asArray();
-        assertTrue(Math.abs(arr.get(0).asDouble() - 40.0) < 0.001);
-        assertTrue(Math.abs(arr.get(1).asDouble() - (-74.0)) < 0.001);
+        assertTrue(Math.abs(result.get("lat").asDouble() - 40.0) < 0.001);
+        assertTrue(Math.abs(result.get("lon").asDouble() - (-74.0)) < 0.001);
     }
 
     @Test
     void midpoint_Equator() {
         DynValue result = invoke("midpoint", F(0.0), F(0.0), F(0.0), F(10.0));
-        var arr = result.asArray();
-        assertTrue(Math.abs(arr.get(0).asDouble()) < 0.01); // lat ~0
-        assertTrue(Math.abs(arr.get(1).asDouble() - 5.0) < 0.01); // lon ~5
+        assertTrue(Math.abs(result.get("lat").asDouble()) < 0.01); // lat ~0
+        assertTrue(Math.abs(result.get("lon").asDouble() - 5.0) < 0.01); // lon ~5
     }
 
     @Test

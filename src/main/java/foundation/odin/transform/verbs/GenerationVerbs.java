@@ -75,21 +75,23 @@ public final class GenerationVerbs {
             var n = args[0].asString();
             if (n != null) name = n;
         }
-
-        String key = "__seq_" + name;
-        long current = 0;
-
-        var existing = ctx.getAccumulators().get(key);
-        if (existing != null) {
-            var val = existing.asInt64();
-            if (val != null) current = val;
-            else {
-                var dVal = existing.asDouble();
-                if (dVal != null) current = dVal.longValue();
-            }
+        long startValue = 1;
+        if (args.length > 1) {
+            var d = args[1].asDouble();
+            if (d != null) startValue = (long) Math.floor(d);
         }
 
-        ctx.getAccumulators().put(key, DynValue.ofInteger(current + 1));
+        String key = "__seq_" + name;
+        long current;
+        var existing = ctx.getAccumulators().get(key);
+        if (existing == null) {
+            current = startValue;
+        } else {
+            var val = existing.asInt64();
+            current = (val != null ? val : (existing.asDouble() != null ? existing.asDouble().longValue() : 0)) + 1;
+        }
+
+        ctx.getAccumulators().put(key, DynValue.ofInteger(current));
         return DynValue.ofInteger(current);
     }
 

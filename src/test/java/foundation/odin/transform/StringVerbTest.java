@@ -367,21 +367,20 @@ class StringVerbTest {
     }
 
     // =========================================================================
-    // pad (center)
+    // pad (right)
     // =========================================================================
 
     @Nested
     class Pad {
         @Test
-        void center() {
-            assertEquals("**hi**", invoke("pad", S("hi"), I(6), S("*")).asString());
+        void right() {
+            assertEquals("hi****", invoke("pad", S("hi"), I(6), S("*")).asString());
         }
 
         @Test
         void oddWidth() {
             var result = invoke("pad", S("hi"), I(5), S("*")).asString();
-            assertEquals(5, result.length());
-            assertTrue(result.contains("hi"));
+            assertEquals("hi***", result);
         }
 
         @Test
@@ -391,7 +390,7 @@ class StringVerbTest {
 
         @Test
         void nullInput() {
-            assertTrue(invoke("pad", Null(), I(5)).isNull());
+            assertEquals("*****", invoke("pad", Null(), I(5), S("*")).asString());
         }
     }
 
@@ -870,12 +869,12 @@ class StringVerbTest {
     class Match {
         @Test
         void found() {
-            assertEquals("123", invoke("match", S("abc123def"), S("\\d+")).asString());
+            assertTrue(invoke("match", S("abc123def"), S("\\d+")).asBool());
         }
 
         @Test
         void notFound() {
-            assertTrue(invoke("match", S("abc"), S("\\d+")).isNull());
+            assertFalse(invoke("match", S("abc"), S("\\d+")).asBool());
         }
 
         @Test
@@ -890,7 +889,7 @@ class StringVerbTest {
 
         @Test
         void fullMatch() {
-            assertEquals("hello", invoke("match", S("hello"), S("^hello$")).asString());
+            assertTrue(invoke("match", S("hello"), S("^hello$")).asBool());
         }
     }
 
@@ -901,17 +900,12 @@ class StringVerbTest {
     @Nested
     class Extract {
         @Test
-        void withGroups() {
-            var result = invoke("extract", S("2024-01-15"), S("(\\d{4})-(\\d{2})-(\\d{2})"));
-            var arr = result.asArray();
-            assertEquals(3, arr.size());
-            assertEquals("2024", arr.get(0).asString());
-            assertEquals("01", arr.get(1).asString());
-            assertEquals("15", arr.get(2).asString());
+        void withGroupIndex() {
+            assertEquals("01", invoke("extract", S("2024-01-15"), S("(\\d{4})-(\\d{2})-(\\d{2})"), I(2)).asString());
         }
 
         @Test
-        void noGroups() {
+        void wholeMatchDefault() {
             assertEquals("123", invoke("extract", S("abc123def"), S("\\d+")).asString());
         }
 
@@ -1034,23 +1028,23 @@ class StringVerbTest {
     @Nested
     class Wrap {
         @Test
-        void sameChar() {
-            assertEquals("\"hello\"", invoke("wrap", S("hello"), S("\"")).asString());
+        void wordWraps() {
+            assertEquals("the quick\nbrown fox", invoke("wrap", S("the quick brown fox"), I(10)).asString());
         }
 
         @Test
-        void differentChars() {
-            assertEquals("(hello)", invoke("wrap", S("hello"), S("("), S(")")).asString());
+        void shorterThanWidth() {
+            assertEquals("hello", invoke("wrap", S("hello"), I(10)).asString());
         }
 
         @Test
         void nullInput() {
-            assertTrue(invoke("wrap", Null(), S("\"")).isNull());
+            assertEquals("", invoke("wrap", Null(), I(10)).asString());
         }
 
         @Test
-        void empty() {
-            assertEquals("\"\"", invoke("wrap", S(""), S("\"")).asString());
+        void zeroWidth() {
+            assertTrue(invoke("wrap", S("abc"), I(0)).isNull());
         }
     }
 
@@ -1166,12 +1160,12 @@ class StringVerbTest {
     class Clean {
         @Test
         void removesControlChars() {
-            assertEquals("helloworld\n", invoke("clean", S("hello\u0000\u0001world\n")).asString());
+            assertEquals("helloworld", invoke("clean", S("hello\u0000\u0001world\n")).asString());
         }
 
         @Test
-        void keepsPrintable() {
-            assertEquals("hello world", invoke("clean", S("hello world")).asString());
+        void collapsesWhitespace() {
+            assertEquals("hello world", invoke("clean", S("  hello   world  ")).asString());
         }
 
         @Test
@@ -1185,8 +1179,8 @@ class StringVerbTest {
         }
 
         @Test
-        void keepsTabs() {
-            assertEquals("\thello\t", invoke("clean", S("\thello\t")).asString());
+        void trimsAndCollapsesTabs() {
+            assertEquals("hello", invoke("clean", S("\thello\t")).asString());
         }
     }
 

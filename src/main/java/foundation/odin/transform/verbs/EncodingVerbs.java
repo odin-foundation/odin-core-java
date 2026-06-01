@@ -206,6 +206,11 @@ public final class EncodingVerbs {
         var path = coerceStr(args[1]);
         if (path == null) return DynValue.ofNull();
 
+        path = path.trim();
+        if (path.startsWith("$")) path = path.substring(1);
+        if (path.startsWith(".") && !path.startsWith("..")) path = path.substring(1);
+        if (path.isEmpty()) return root;
+
         var segments = path.split("\\.");
         var current = root;
         for (var seg : segments) {

@@ -351,16 +351,16 @@ class NumericVerbExtendedTest {
 
     // =========================================================================
     // 12. CLAMP / INTERPOLATE / WEIGHTED_AVG
-    // .NET interpolate(a, b, t) = a + (b-a)*t  (3 args, not 5)
+    // interpolate(x, x1, y1, x2, y2)
     // =========================================================================
 
     @Test void clamp_WithinRange() { assertNumeric(invoke("clamp", F(5.0), F(1.0), F(10.0)), 5.0, 1e-10); }
     @Test void clamp_BelowMin() { assertNumeric(invoke("clamp", F(-5.0), F(0.0), F(10.0)), 0.0, 1e-10); }
     @Test void clamp_AboveMax() { assertNumeric(invoke("clamp", F(15.0), F(0.0), F(10.0)), 10.0, 1e-10); }
 
-    @Test void interpolate_Midpoint() { assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(0.5)), 50.0, 1e-10); }
-    @Test void interpolate_AtStart() { assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(0.0)), 0.0, 1e-10); }
-    @Test void interpolate_AtEnd() { assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(1.0)), 100.0, 1e-10); }
+    @Test void interpolate_Midpoint() { assertNumeric(invoke("interpolate", F(5.0), F(0.0), F(100.0), F(10.0), F(200.0)), 150.0, 1e-10); }
+    @Test void interpolate_AtStart() { assertNumeric(invoke("interpolate", F(0.0), F(0.0), F(100.0), F(10.0), F(200.0)), 100.0, 1e-10); }
+    @Test void interpolate_AtEnd() { assertNumeric(invoke("interpolate", F(10.0), F(0.0), F(100.0), F(10.0), F(200.0)), 200.0, 1e-10); }
     @Test void interpolate_MissingArgs() { assertTrue(invoke("interpolate", F(0.0), F(100.0)).isNull()); }
 
     @Test
@@ -444,19 +444,19 @@ class NumericVerbExtendedTest {
 
     // =========================================================================
     // 17. ZSCORE
-    // .NET zscore(value, mean, stddev) -- 3 scalar args
+    // zscore(value, dataset)
     // =========================================================================
 
-    @Test void zscore_AtMean() { assertNumeric(invoke("zscore", F(3.0), F(3.0), F(2.0)), 0.0, 1e-10); }
+    @Test void zscore_AtMean() { assertNumeric(invoke("zscore", F(3.0), Arr(F(1.0), F(3.0), F(5.0))), 0.0, 1e-10); }
 
     @Test
     void zscore_AboveMean() {
-        // zscore(value=5, mean=3, stddev=2) = (5-3)/2 = 1.0
-        var result = invoke("zscore", F(5.0), F(3.0), F(2.0));
-        assertNumeric(result, 1.0, 1e-10);
+        // zscore(value=5, dataset=[1,3,5])
+        var result = invoke("zscore", F(5.0), Arr(F(1.0), F(3.0), F(5.0)));
+        assertNumeric(result, 2.0 / Math.sqrt(8.0 / 3.0), 1e-10);
     }
 
-    @Test void zscore_AllSame() { assertTrue(invoke("zscore", F(5.0), F(5.0), F(0.0)).isNull()); }
+    @Test void zscore_AllSame() { assertTrue(invoke("zscore", F(5.0), Arr(F(5.0), F(5.0), F(5.0))).isNull()); }
 
     // =========================================================================
     // 18. NUMERIC EDGE CASES

@@ -87,6 +87,11 @@ public final class TransformEngine {
                 if (warnings != null) warnings.add(OdinErrors.lookupTableNotFoundWarning(tableName));
             }
         }
+
+        // Record a verb-level error (T002/T011 and similar).
+        public void addError(TransformError error) {
+            if (errors != null) errors.add(error);
+        }
     }
 
     // ── ExecContext ──
@@ -105,9 +110,12 @@ public final class TransformEngine {
         DynValue globalOutput;
         Map<String, OdinModifiers> fieldModifiers = new LinkedHashMap<>();
         String sourceFormat;
+        String targetFormat;
+        Map<String, String> targetOptions;
         String onValidation;
         String onError;
         String onMissing;
+        boolean strictTypes;
     }
 
     // ── Transform Options ──
@@ -516,6 +524,9 @@ public final class TransformEngine {
         ctx.onValidation = targetOpts != null ? targetOpts.get("onValidation") : null;
         ctx.onError = targetOpts != null ? targetOpts.get("onError") : null;
         ctx.onMissing = targetOpts != null ? targetOpts.get("onMissing") : null;
+        ctx.strictTypes = transform.isStrictTypes();
+        ctx.targetFormat = transform.getTarget() != null ? transform.getTarget().getFormat() : null;
+        ctx.targetOptions = targetOpts;
         return ctx;
     }
 
@@ -1074,6 +1085,10 @@ public final class TransformEngine {
             // Apply mapping directives (type coercion, extraction)
             value = applyMappingDirectives(value, mapping.getDirectives(), ctx.sourceFormat, mapping.getExpression());
 
+            // T007: warn on a field modifier that the target format does not support.
+            // T010: a fixed-width field whose pos+len exceeds the line width.
+            checkModifierFormat(mapping, ctx);
+
             // Validation modifiers: :validate, :enum, :range (honors onValidation policy).
             if (!validateFieldValue(value, mapping, ctx)) return output;
 
@@ -1159,6 +1174,58 @@ public final class TransformEngine {
             if (name.equals(d.getName())) return d;
         }
         return null;
+    }
+
+    // Format-specific field modifiers and the formats that accept them.
+    private static final Map<String, Set<String>> FORMAT_SPECIFIC_MODIFIERS = Map.of(
+            "pos", Set.of("fixed-width", "fwf"),
+            "len", Set.of("fixed-width", "fwf"),
+            "leftPad", Set.of("fixed-width", "fwf"),
+            "rightPad", Set.of("fixed-width", "fwf"),
+            "truncate", Set.of("fixed-width", "fwf"),
+            "element", Set.of("xml"),
+            "attr", Set.of("xml"),
+            "ns", Set.of("xml"),
+            "cdata", Set.of("xml"),
+            "raw", Set.of("json"));
+
+    private static void checkModifierFormat(FieldMapping mapping, ExecContext ctx) {
+        if (mapping.getDirectives() == null) return;
+        String fmt = ctx.targetFormat != null ? ctx.targetFormat : "odin";
+
+        for (var d : mapping.getDirectives()) {
+            var allowed = FORMAT_SPECIFIC_MODIFIERS.get(d.getName());
+            if (allowed != null && !allowed.contains(fmt)) {
+                ctx.warnings.add(OdinErrors.invalidModifierWarning(d.getName(), fmt));
+            }
+        }
+
+        // T010: fixed-width pos + len beyond the configured line width.
+        if ("fixed-width".equals(fmt) || "fwf".equals(fmt)) {
+            Integer pos = directiveInt(mapping, "pos");
+            Integer len = directiveInt(mapping, "len");
+            int lineWidth = targetOptionInt(ctx, "lineWidth", 80);
+            if (pos != null && len != null && pos + len > lineWidth) {
+                ctx.errors.add(OdinErrors.positionOverflowError(mapping.getTarget(), pos, len, lineWidth));
+            }
+        }
+    }
+
+    private static Integer directiveInt(FieldMapping mapping, String name) {
+        var d = findMappingDirective(mapping, name);
+        if (d == null || d.getValue() == null) return null;
+        var num = d.getValue().asNumber();
+        if (num != null) return (int) Math.floor(num);
+        var s = d.getValue().asString();
+        try { return s != null ? Integer.parseInt(s.trim()) : null; }
+        catch (NumberFormatException e) { return null; }
+    }
+
+    private static int targetOptionInt(ExecContext ctx, String key, int fallback) {
+        if (ctx.targetOptions == null) return fallback;
+        var v = ctx.targetOptions.get(key);
+        if (v == null) return fallback;
+        try { return Integer.parseInt(v.trim()); } catch (NumberFormatException e) { return fallback; }
     }
 
     // Evaluate a field :if/:unless condition: `path` truthiness or `path op value`.
@@ -1438,6 +1505,13 @@ public final class TransformEngine {
             }
             // T001: unknown built-in verb.
             throw new CodedTransformException(OdinErrors.unknownVerbError(call.getVerb()));
+        }
+
+        // T002: strict-mode verb argument type validation.
+        if (ctx.strictTypes && !call.isCustom()) {
+            String typeError = VerbSignatures.validate(call.getVerb(), evaluatedArgs);
+            if (typeError != null)
+                throw new CodedTransformException(OdinErrors.invalidVerbArgsError(call.getVerb(), typeError));
         }
 
         var verbCtx = new VerbContext();

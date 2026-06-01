@@ -47,10 +47,10 @@ public final class OdinFormatter {
                 }
             }
 
-            if (hasSections) {
-                if (includeHeader) sb.append("{}\n");
+            if (hasSections && includeHeader) {
+                sb.append("{}\n");
 
-                // First pass: flat top-level fields and leaf chains
+                // First pass: flat top-level fields and leaf chains under {}.
                 for (var entry : entries) {
                     if (entry.getValue().getType() == DynValue.Type.Object) {
                         collectLeafPaths(sb, entry.getKey(), entry.getValue(), entry.getKey(), modifiers);
@@ -59,13 +59,53 @@ public final class OdinFormatter {
                     }
                 }
 
-                // Second pass: sections and arrays
+                // Second pass: sections and arrays.
                 String[] lastCtx = {""};
                 for (var entry : entries) {
                     if (entry.getValue().getType() == DynValue.Type.Object && !isPureLeafChain(entry.getValue())) {
                         writeSection(sb, entry.getKey(), entry.getKey(), null, entry.getValue(), modifiers, lastCtx);
                     } else if (entry.getValue().getType() == DynValue.Type.Array) {
                         writeArraySection(sb, entry.getKey(), null, entry.getValue().asArray(), modifiers);
+                    }
+                }
+            } else if (hasSections) {
+                boolean deep = hasTopLevelArray(entries);
+
+                // First pass: top-level scalar fields.
+                for (var entry : entries) {
+                    var t = entry.getValue().getType();
+                    if (t != DynValue.Type.Object && t != DynValue.Type.Array) {
+                        writeAssignment(sb, entry.getKey(), entry.getValue(), entry.getKey(), modifiers);
+                    }
+                }
+
+                // With arrays present, single-leaf object groups flatten ahead of array/header groups.
+                if (deep) {
+                    for (var entry : entries) {
+                        var v = entry.getValue();
+                        if (v.getType() == DynValue.Type.Object && isPureLeafChain(v)
+                                && countLeaves(v) == 1) {
+                            collectLeafPathsInner(sb, entry.getKey(), v, entry.getKey(), modifiers);
+                        }
+                    }
+                }
+
+                // Second pass: object sections and array sections.
+                String[] lastCtx = {""};
+                for (var entry : entries) {
+                    var v = entry.getValue();
+                    if (v.getType() == DynValue.Type.Object) {
+                        if (deep && isPureLeafChain(v) && countLeaves(v) == 1) continue;
+                        // A section holding only one array collapses to an absolute array block.
+                        var solo = soleArrayChild(v);
+                        if (solo != null) {
+                            writeArraySection(sb, entry.getKey() + "." + solo.getKey(), null,
+                                    solo.getValue().asArray(), modifiers);
+                        } else {
+                            writeSection(sb, entry.getKey(), entry.getKey(), null, v, modifiers, lastCtx);
+                        }
+                    } else if (v.getType() == DynValue.Type.Array) {
+                        writeArraySection(sb, entry.getKey(), null, v.asArray(), modifiers);
                     }
                 }
             } else {
@@ -87,6 +127,48 @@ public final class OdinFormatter {
         }
 
         return sb.toString();
+    }
+
+    // Any top-level entry that is (or contains) an array makes the document "deep".
+    private static boolean hasTopLevelArray(List<Map.Entry<String, DynValue>> entries) {
+        for (var e : entries) {
+            if (containsArray(e.getValue())) return true;
+        }
+        return false;
+    }
+
+    private static boolean containsArray(DynValue v) {
+        if (v.getType() == DynValue.Type.Array) return true;
+        if (v.getType() == DynValue.Type.Object) {
+            var obj = v.asObject();
+            if (obj != null) for (var e : obj) if (containsArray(e.getValue())) return true;
+        }
+        return false;
+    }
+
+    // An object whose only field is a single-leaf array; returns that field, else null.
+    private static Map.Entry<String, DynValue> soleArrayChild(DynValue val) {
+        var entries = val.asObject();
+        if (entries == null || entries.size() != 1) return null;
+        var e = entries.get(0);
+        if (e.getValue().getType() != DynValue.Type.Array) return null;
+        return countLeaves(e.getValue()) <= 1 ? e : null;
+    }
+
+    private static int countLeaves(DynValue v) {
+        if (v.getType() == DynValue.Type.Array) {
+            var arr = v.asArray();
+            if (arr == null) return 0;
+            int n = 0;
+            for (var el : arr) n += countLeaves(el);
+            return n;
+        }
+        if (v.getType() != DynValue.Type.Object) return 1;
+        var obj = v.asObject();
+        if (obj == null) return 1;
+        int n = 0;
+        for (var e : obj) n += countLeaves(e.getValue());
+        return n;
     }
 
     // ─── Section writing ─────────────────────────────────────────────
@@ -169,6 +251,28 @@ public final class OdinFormatter {
             return;
         }
 
+        // Array-of-arrays: positional table with [i] / [i].field columns.
+        boolean allArrays = true;
+        for (var item : items) {
+            if (item.getType() != DynValue.Type.Array) { allArrays = false; break; }
+        }
+        if (allArrays) {
+            var cols = positionalColumns(items);
+            sb.append('{');
+            if (parentSection != null) sb.append('.');
+            sb.append(name).append("[] : ").append(formatColumnsWithRelative(cols)).append("}\n");
+            for (var item : items) {
+                var arr = item.asArray();
+                for (int c = 0; c < cols.size(); c++) {
+                    if (c > 0) sb.append(", ");
+                    DynValue cell = resolvePositional(arr, cols.get(c));
+                    if (cell != null) sb.append(valueToOdinString(cell));
+                }
+                sb.append('\n');
+            }
+            return;
+        }
+
         // Tabular or fallback
         var columns = getConsistentColumns(items);
         if (columns != null && !columns.isEmpty()) {
@@ -193,11 +297,50 @@ public final class OdinFormatter {
         if (parentSection == null || parentSection.isEmpty()) fullName = name;
         else fullName = parentSection + "." + name;
         for (int i = 0; i < items.size(); i++) {
-            if (i > 0) sb.append('\n');
             String itemHeader = fullName + "[" + i + "]";
             sb.append('{').append(itemHeader).append("}\n");
             writeFieldsSimple(sb, items.get(i), itemHeader);
         }
+    }
+
+    // Columns for an array of arrays: [i] for scalar slots, [i].field for object slots.
+    private static List<String> positionalColumns(List<DynValue> items) {
+        var cols = new ArrayList<String>();
+        var seen = new HashSet<String>();
+        for (var item : items) {
+            var arr = item.asArray();
+            if (arr == null) continue;
+            for (int i = 0; i < arr.size(); i++) {
+                var el = arr.get(i);
+                if (el.getType() == DynValue.Type.Object) {
+                    var obj = el.asObject();
+                    if (obj != null) {
+                        for (var f : obj) {
+                            String col = "[" + i + "]." + f.getKey();
+                            if (seen.add(col)) cols.add(col);
+                        }
+                        continue;
+                    }
+                }
+                String col = "[" + i + "]";
+                if (seen.add(col)) cols.add(col);
+            }
+        }
+        return cols;
+    }
+
+    private static DynValue resolvePositional(List<DynValue> arr, String col) {
+        if (arr == null) return null;
+        int close = col.indexOf(']');
+        int idx = Integer.parseInt(col.substring(1, close));
+        if (idx < 0 || idx >= arr.size()) return null;
+        var el = arr.get(idx);
+        if (close + 1 < col.length() && col.charAt(close + 1) == '.') {
+            String field = col.substring(close + 2);
+            var obj = el.asObject();
+            return obj != null ? findField(obj, field) : null;
+        }
+        return el;
     }
 
     private static List<String> getConsistentColumns(List<DynValue> items) {
@@ -393,15 +536,17 @@ public final class OdinFormatter {
             if (t == DynValue.Type.Object || t == DynValue.Type.Array) continue;
             sb.append(entry.getKey()).append(" = ").append(valueToOdinString(v)).append('\n');
         }
-        // Pass 2: nested arrays as relative primitive/tabular sub-blocks
+        // Pass 2: nested arrays as relative sub-blocks against the open record header.
         for (var entry : entries) {
             var v = entry.getValue();
             if (v.getType() != DynValue.Type.Array) continue;
             var arr = v.asArray();
             if (arr == null) continue;
-            // Use the absolute path so the parser places values under the right record.
-            String absName = parentHeader != null ? parentHeader + "." + entry.getKey() : entry.getKey();
-            writeArraySection(sb, absName, null, arr, null);
+            if (parentHeader != null) {
+                writeArraySection(sb, entry.getKey(), parentHeader, arr, null);
+            } else {
+                writeArraySection(sb, entry.getKey(), null, arr, null);
+            }
         }
         // Pass 3: nested objects as relative sub-sections
         for (var entry : entries) {
@@ -464,17 +609,7 @@ public final class OdinFormatter {
     }
 
     private static String formatDouble(double n) {
-        String s = Double.toString(n);
-        // Normalize: 6.022E23 -> 6.022e+23, -2.73E-2 -> -2.73e-2
-        int ePos = s.indexOf('E');
-        if (ePos >= 0) {
-            String mantissa = s.substring(0, ePos);
-            String exponent = s.substring(ePos + 1);
-            if (!exponent.startsWith("-") && !exponent.startsWith("+"))
-                exponent = "+" + exponent;
-            return mantissa + "e" + exponent;
-        }
-        return s;
+        return JsNumber.toString(n);
     }
 
     private static String escapeOdinString(String s) {

@@ -719,25 +719,26 @@ class FinancialVerbTest {
 
     @Test
     void zscore_AtMean() {
-        // zscore(value, mean, stddev)
-        assertNumeric(invoke("zscore", F(5.0), F(5.0), F(2.0)), 0.0, 1e-10);
+        // zscore(value, dataset) — mean of [1,3,5,7,9] is 5
+        assertNumeric(invoke("zscore", F(5.0), Arr(F(1.0), F(3.0), F(5.0), F(7.0), F(9.0))), 0.0, 1e-10);
     }
 
     @Test
     void zscore_AboveMean() {
-        DynValue result = invoke("zscore", F(7.0), F(5.0), F(2.0));
-        assertNumeric(result, 1.0, 1e-10);
+        // population stddev of [1,3,5,7,9] is sqrt(8); (7-5)/sqrt(8)
+        DynValue result = invoke("zscore", F(7.0), Arr(F(1.0), F(3.0), F(5.0), F(7.0), F(9.0)));
+        assertNumeric(result, 2.0 / Math.sqrt(8.0), 1e-10);
     }
 
     @Test
     void zscore_BelowMean() {
-        DynValue result = invoke("zscore", F(3.0), F(5.0), F(2.0));
-        assertNumeric(result, -1.0, 1e-10);
+        DynValue result = invoke("zscore", F(3.0), Arr(F(1.0), F(3.0), F(5.0), F(7.0), F(9.0)));
+        assertNumeric(result, -2.0 / Math.sqrt(8.0), 1e-10);
     }
 
     @Test
     void zscore_ZeroStddev() {
-        assertTrue(invoke("zscore", F(5.0), F(5.0), F(0.0)).isNull());
+        assertTrue(invoke("zscore", F(5.0), Arr(F(5.0), F(5.0), F(5.0))).isNull());
     }
 
     // =========================================================================
@@ -761,18 +762,18 @@ class FinancialVerbTest {
 
     @Test
     void interpolate_Midpoint() {
-        // interpolate(a, b, t) = a + (b - a) * t
-        assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(0.5)), 50.0, 1e-10);
+        // interpolate(x, x1, y1, x2, y2): x=5 on (0,100)-(10,200) → 150
+        assertNumeric(invoke("interpolate", F(5.0), F(0.0), F(100.0), F(10.0), F(200.0)), 150.0, 1e-10);
     }
 
     @Test
     void interpolate_AtStart() {
-        assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(0.0)), 0.0, 1e-10);
+        assertNumeric(invoke("interpolate", F(0.0), F(0.0), F(100.0), F(10.0), F(200.0)), 100.0, 1e-10);
     }
 
     @Test
     void interpolate_AtEnd() {
-        assertNumeric(invoke("interpolate", F(0.0), F(100.0), F(1.0)), 100.0, 1e-10);
+        assertNumeric(invoke("interpolate", F(10.0), F(0.0), F(100.0), F(10.0), F(200.0)), 200.0, 1e-10);
     }
 
     @Test

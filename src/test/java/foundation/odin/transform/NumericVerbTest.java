@@ -564,20 +564,20 @@ class NumericVerbTest {
 
     @Test
     void zscore_AtMean() {
-        // zscore(value, mean, stddev)
-        var result = invoke("zscore", F(5.0), F(5.0), F(2.0));
+        // zscore(value, dataset)
+        var result = invoke("zscore", F(5.0), Arr(F(1.0), F(3.0), F(5.0), F(7.0), F(9.0)));
         assertNumeric(result, 0.0, 1e-10);
     }
 
     @Test
     void zscore_AboveMean() {
-        var result = invoke("zscore", F(7.0), F(5.0), F(2.0));
-        assertNumeric(result, 1.0, 1e-10);
+        var result = invoke("zscore", F(7.0), Arr(F(1.0), F(3.0), F(5.0), F(7.0), F(9.0)));
+        assertNumeric(result, 2.0 / Math.sqrt(8.0), 1e-10);
     }
 
     @Test
     void zscore_ZeroStddev() {
-        var result = invoke("zscore", F(5.0), F(5.0), F(0.0));
+        var result = invoke("zscore", F(5.0), Arr(F(5.0), F(5.0), F(5.0)));
         assertTrue(result.isNull());
     }
 
@@ -592,21 +592,21 @@ class NumericVerbTest {
 
     @Test
     void interpolate_Midpoint() {
-        // interpolate(a, b, t) = a + (b-a)*t
-        var result = invoke("interpolate", F(0.0), F(100.0), F(0.5));
-        assertNumeric(result, 50.0, 1e-10);
+        // interpolate(x, x1, y1, x2, y2)
+        var result = invoke("interpolate", F(5.0), F(0.0), F(100.0), F(10.0), F(200.0));
+        assertNumeric(result, 150.0, 1e-10);
     }
 
     @Test
     void interpolate_AtStart() {
-        var result = invoke("interpolate", F(0.0), F(100.0), F(0.0));
-        assertNumeric(result, 0.0, 1e-10);
+        var result = invoke("interpolate", F(0.0), F(0.0), F(100.0), F(10.0), F(200.0));
+        assertNumeric(result, 100.0, 1e-10);
     }
 
     @Test
     void interpolate_AtEnd() {
-        var result = invoke("interpolate", F(0.0), F(100.0), F(1.0));
-        assertNumeric(result, 100.0, 1e-10);
+        var result = invoke("interpolate", F(10.0), F(0.0), F(100.0), F(10.0), F(200.0));
+        assertNumeric(result, 200.0, 1e-10);
     }
 
     @Test void interpolate_MissingArgs() { assertTrue(invoke("interpolate", F(0.0), F(100.0)).isNull()); }

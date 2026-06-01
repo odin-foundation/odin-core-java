@@ -213,14 +213,21 @@ public final class DateTimeVerbs {
     }
 
     private static DynValue parseTimestamp(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofNull();
-        String s = extractDateStr(args[0]);
-        if (s == null) return DynValue.ofNull();
+        if (args.length < 2) return DynValue.ofNull();
+        String s = args[0].asString();
+        String pattern = args[1].asString();
+        if (s == null || pattern == null) return DynValue.ofNull();
 
-        LocalDateTime dt = parseDt(s);
+        String javaFmt = pattern.replace("YYYY", "yyyy").replace("DD", "dd");
+        LocalDateTime dt;
+        try {
+            dt = LocalDateTime.parse(s, DateTimeFormatter.ofPattern(javaFmt));
+        } catch (Exception e) {
+            dt = parseWithFormat(s, pattern);
+        }
         if (dt == null) return DynValue.ofNull();
 
-        return DynValue.ofTimestamp(formatAsTimestamp(dt));
+        return DynValue.ofString(dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
     }
 
     private static DynValue addDays(DynValue[] args, VerbContext ctx) {
@@ -361,7 +368,7 @@ public final class DateTimeVerbs {
         if (dt == null) return DynValue.ofNull();
 
         LocalDateTime result = LocalDateTime.of(dt.getYear(), dt.getMonthValue(), 1, 0, 0, 0);
-        return DynValue.ofDate(formatAsDate(result));
+        return DynValue.ofString(formatAsDate(result));
     }
 
     private static DynValue endOfMonth(DynValue[] args, VerbContext ctx) {
@@ -374,7 +381,7 @@ public final class DateTimeVerbs {
 
         int lastDay = DateUtils.daysInMonth(dt.getYear(), dt.getMonthValue());
         LocalDateTime result = LocalDateTime.of(dt.getYear(), dt.getMonthValue(), lastDay, 0, 0, 0);
-        return DynValue.ofDate(formatAsDate(result));
+        return DynValue.ofString(formatAsDate(result));
     }
 
     private static DynValue startOfYear(DynValue[] args, VerbContext ctx) {
@@ -386,7 +393,7 @@ public final class DateTimeVerbs {
         if (dt == null) return DynValue.ofNull();
 
         LocalDateTime result = LocalDateTime.of(dt.getYear(), 1, 1, 0, 0, 0);
-        return DynValue.ofDate(formatAsDate(result));
+        return DynValue.ofString(formatAsDate(result));
     }
 
     private static DynValue endOfYear(DynValue[] args, VerbContext ctx) {
@@ -398,7 +405,7 @@ public final class DateTimeVerbs {
         if (dt == null) return DynValue.ofNull();
 
         LocalDateTime result = LocalDateTime.of(dt.getYear(), 12, 31, 0, 0, 0);
-        return DynValue.ofDate(formatAsDate(result));
+        return DynValue.ofString(formatAsDate(result));
     }
 
     private static DynValue dayOfWeek(DynValue[] args, VerbContext ctx) {
@@ -540,10 +547,21 @@ public final class DateTimeVerbs {
         LocalDateTime birthDt = parseDt(s);
         if (birthDt == null) return DynValue.ofNull();
 
-        LocalDate now = LocalDate.now(ZoneOffset.UTC);
-        int age = now.getYear() - birthDt.getYear();
-        if (now.getMonthValue() < birthDt.getMonthValue() ||
-                (now.getMonthValue() == birthDt.getMonthValue() && now.getDayOfMonth() < birthDt.getDayOfMonth())) {
+        LocalDate asOf;
+        if (args.length >= 2) {
+            String asOfStr = extractDateStr(args[1]);
+            LocalDateTime asOfDt = asOfStr != null ? parseDt(asOfStr) : null;
+            if (asOfDt == null) return DynValue.ofNull();
+            asOf = asOfDt.toLocalDate();
+        } else {
+            asOf = LocalDate.now(ZoneOffset.UTC);
+        }
+
+        if (birthDt.toLocalDate().isAfter(asOf)) return DynValue.ofNull();
+
+        int age = asOf.getYear() - birthDt.getYear();
+        if (asOf.getMonthValue() < birthDt.getMonthValue() ||
+                (asOf.getMonthValue() == birthDt.getMonthValue() && asOf.getDayOfMonth() < birthDt.getDayOfMonth())) {
             age--;
         }
         return DynValue.ofInteger(age);

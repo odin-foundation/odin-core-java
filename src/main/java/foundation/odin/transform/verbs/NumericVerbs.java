@@ -272,24 +272,45 @@ public final class NumericVerbs {
     private static DynValue parseInt(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
         if (args[0].isNull()) return DynValue.ofNull();
-        Long intVal = args[0].asInt64();
-        if (intVal != null) return DynValue.ofInteger(intVal);
-        Double dblVal = toDouble(args[0]);
-        if (dblVal != null) return DynValue.ofInteger((long) dblVal.doubleValue());
-        String s = args[0].asString();
-        if (s != null) {
-            s = s.trim();
-            try {
-                return DynValue.ofInteger(Long.parseLong(s));
-            } catch (NumberFormatException e) {
-                try {
-                    return DynValue.ofInteger((long) Double.parseDouble(s));
-                } catch (NumberFormatException e2) {
-                    // fall through
-                }
-            }
+        int radix = 10;
+        if (args.length >= 2) {
+            Double r = toDouble(args[1]);
+            if (r != null) radix = (int) Math.floor(r);
         }
-        return DynValue.ofNull();
+        if (radix < 2 || radix > 36) return DynValue.ofNull();
+
+        String s = toStrForParse(args[0]);
+        Long parsed = parseIntLeading(s, radix);
+        return parsed != null ? DynValue.ofInteger(parsed) : DynValue.ofNull();
+    }
+
+    private static String toStrForParse(DynValue v) {
+        String s = v.asString();
+        if (s != null) return s;
+        Long iv = v.asInt64();
+        if (iv != null) return Long.toString(iv);
+        Double dv = v.asDouble();
+        return dv != null ? Double.toString(dv) : "";
+    }
+
+    // Parse a leading integer in the given radix; null if no digits parse.
+    private static Long parseIntLeading(String s, int radix) {
+        s = s.trim();
+        int i = 0, n = s.length();
+        boolean neg = false;
+        if (i < n && (s.charAt(i) == '+' || s.charAt(i) == '-')) {
+            neg = s.charAt(i) == '-';
+            i++;
+        }
+        int start = i;
+        while (i < n && Character.digit(s.charAt(i), radix) >= 0) i++;
+        if (i == start) return null;
+        try {
+            long val = Long.parseLong(s.substring(start, i), radix);
+            return neg ? -val : val;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static DynValue safeDivide(DynValue[] args, VerbContext ctx) {

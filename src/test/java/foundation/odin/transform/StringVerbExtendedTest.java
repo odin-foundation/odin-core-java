@@ -195,22 +195,20 @@ class StringVerbExtendedTest {
 
     @Nested class PadCenterTests {
 
-        @Test void pad_centerAlreadyWide() {
+        @Test void pad_alreadyWide() {
             assertEquals("hello", invoke("pad", S("hello"), I(3), S("*")).asString());
         }
 
-        @Test void pad_centerEmptyString() {
+        @Test void pad_emptyString() {
             assertEquals("xxxx", invoke("pad", S(""), I(4), S("x")).asString());
         }
 
-        @Test void pad_centerEvenPadding() {
-            assertEquals("--hi--", invoke("pad", S("hi"), I(6), S("-")).asString());
+        @Test void pad_rightPadding() {
+            assertEquals("hi----", invoke("pad", S("hi"), I(6), S("-")).asString());
         }
 
-        @Test void pad_tooFewArgs_defaultsPadChar() {
-            var result = invoke("pad", S("hi"), I(6));
-            assertNotNull(result);
-            assertEquals(6, result.asString().length());
+        @Test void pad_tooFewArgs_returnsNull() {
+            assertTrue(invoke("pad", S("hi"), I(6)).isNull());
         }
     }
 
@@ -482,11 +480,11 @@ class StringVerbExtendedTest {
     @Nested class MatchTests {
 
         @Test void match_digitPattern() {
-            assertEquals("123", invoke("match", S("abc123def"), S("\\d+")).asString());
+            assertTrue(invoke("match", S("abc123def"), S("\\d+")).asBool());
         }
 
-        @Test void match_notFoundReturnsNull() {
-            assertTrue(invoke("match", S("abc"), S("\\d+")).isNull());
+        @Test void match_notFoundReturnsFalse() {
+            assertFalse(invoke("match", S("abc"), S("\\d+")).asBool());
         }
 
         @Test void match_nullReturnsNull() {
@@ -498,11 +496,11 @@ class StringVerbExtendedTest {
         }
 
         @Test void match_fullPattern() {
-            assertEquals("hello", invoke("match", S("hello"), S("^hello$")).asString());
+            assertTrue(invoke("match", S("hello"), S("^hello$")).asBool());
         }
 
         @Test void match_wordBoundary() {
-            assertEquals("world", invoke("match", S("hello world"), S("world")).asString());
+            assertTrue(invoke("match", S("hello world"), S("world")).asBool());
         }
     }
 
@@ -536,17 +534,11 @@ class StringVerbExtendedTest {
 
     @Nested class ExtractTests {
 
-        @Test void extract_withGroups() {
-            var result = invoke("extract", S("2024-01-15"), S("(\\d{4})-(\\d{2})-(\\d{2})"));
-            var arr = result.asArray();
-            assertNotNull(arr);
-            assertEquals(3, arr.size());
-            assertEquals("2024", arr.get(0).asString());
-            assertEquals("01", arr.get(1).asString());
-            assertEquals("15", arr.get(2).asString());
+        @Test void extract_groupIndex() {
+            assertEquals("01", invoke("extract", S("2024-01-15"), S("(\\d{4})-(\\d{2})-(\\d{2})"), I(2)).asString());
         }
 
-        @Test void extract_noGroups() {
+        @Test void extract_wholeMatchDefault() {
             assertEquals("123", invoke("extract", S("abc123def"), S("\\d+")).asString());
         }
 
@@ -558,13 +550,8 @@ class StringVerbExtendedTest {
             assertTrue(invoke("extract", Null(), S("\\d+")).isNull());
         }
 
-        @Test void extract_emailGroups() {
-            var result = invoke("extract", S("user@domain.com"), S("(.+)@(.+)"));
-            var arr = result.asArray();
-            assertNotNull(arr);
-            assertEquals(2, arr.size());
-            assertEquals("user", arr.get(0).asString());
-            assertEquals("domain.com", arr.get(1).asString());
+        @Test void extract_firstGroup() {
+            assertEquals("user", invoke("extract", S("user@domain.com"), S("(.+)@(.+)"), I(1)).asString());
         }
     }
 
@@ -653,24 +640,24 @@ class StringVerbExtendedTest {
 
     @Nested class WrapTests {
 
-        @Test void wrap_singleQuotes() {
-            assertEquals("'hello'", invoke("wrap", S("hello"), S("'")).asString());
+        @Test void wrap_wordWrap() {
+            assertEquals("the quick\nbrown fox", invoke("wrap", S("the quick brown fox"), I(10)).asString());
         }
 
-        @Test void wrap_brackets() {
-            assertEquals("[hello]", invoke("wrap", S("hello"), S("["), S("]")).asString());
+        @Test void wrap_shorterThanWidth() {
+            assertEquals("hello", invoke("wrap", S("hello"), I(20)).asString());
         }
 
-        @Test void wrap_angleBrackets() {
-            assertEquals("<hello>", invoke("wrap", S("hello"), S("<"), S(">")).asString());
+        @Test void wrap_breaksEveryWord() {
+            assertEquals("aa\nbb\ncc", invoke("wrap", S("aa bb cc"), I(2)).asString());
         }
 
-        @Test void wrap_emptyInput() {
-            assertEquals("\"\"", invoke("wrap", S(""), S("\"")).asString());
+        @Test void wrap_zeroWidthNull() {
+            assertTrue(invoke("wrap", S("abc"), I(0)).isNull());
         }
 
-        @Test void wrap_nullPassthrough() {
-            assertTrue(invoke("wrap", Null(), S("\"")).isNull());
+        @Test void wrap_nullCoercesEmpty() {
+            assertEquals("", invoke("wrap", Null(), I(10)).asString());
         }
     }
 
@@ -736,8 +723,8 @@ class StringVerbExtendedTest {
             assertEquals("hello world", invoke("clean", S("hello world")).asString());
         }
 
-        @Test void clean_preservesNewlinesTabs() {
-            assertEquals("a\nb\tc\r", invoke("clean", S("a\nb\tc\r")).asString());
+        @Test void clean_collapsesInteriorWhitespace() {
+            assertEquals("a b c", invoke("clean", S("a\nb\tc\r")).asString());
         }
 
         @Test void clean_integerCoerces() {

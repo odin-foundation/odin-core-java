@@ -97,6 +97,15 @@ public final class OdinParser {
             if (nextPos >= tokens.size()) return false;
             return tokens.get(nextPos).getTokenType() == TokenType.Equals;
         }
+
+        // True when a blank line (two consecutive newlines, no content between)
+        // immediately follows the current position, terminating an array section.
+        boolean blankLineAhead() {
+            int p = pos;
+            return p + 1 < tokens.size()
+                    && tokens.get(p).getTokenType() == TokenType.Newline
+                    && tokens.get(p + 1).getTokenType() == TokenType.Newline;
+        }
     }
 
     // ── Document Parsing ──
@@ -155,6 +164,14 @@ public final class OdinParser {
 
                 case Path, BooleanLiteral ->
                     parseAssignment(state, inMetadata, metadata, assignments, modifiers, arrayIndices);
+
+                case Equals -> {
+                    // Header-as-target assignment ({.section} = <expr>) binds the open section.
+                    if (state.currentHeader != null)
+                        parseAssignment(state, inMetadata, metadata, assignments, modifiers, arrayIndices);
+                    else
+                        state.advance();
+                }
 
                 case Directive -> {
                     // Bare segment-directive line (e.g. `:loop vehicles`, `:counter idx`) →
@@ -464,10 +481,16 @@ public final class OdinParser {
             OrderedMap<String, OdinValue> assignments,
             OrderedMap<String, OdinModifiers> modifiers,
             Map<String, List<Integer>> arrayIndices) {
-        String pathValue = state.current().getValue();
         int pathLine = state.current().getLine();
         int pathCol = state.current().getColumn();
-        state.advance();
+        String pathValue;
+        if (state.current().getTokenType() == TokenType.Equals) {
+            // Empty LHS: bind the value to the current section path.
+            pathValue = "";
+        } else {
+            pathValue = state.current().getValue();
+            state.advance();
+        }
 
         // Top-level metadata assignment ($.path = value), e.g. canonical-form output.
         if (pathValue.startsWith("$.")) {
@@ -479,7 +502,9 @@ public final class OdinParser {
         // Build full path with current header
         String fullPath;
         if (state.currentHeader != null) {
-            if (pathValue.length() > 0 && pathValue.charAt(0) == '[') {
+            if (pathValue.isEmpty()) {
+                fullPath = state.currentHeader;
+            } else if (pathValue.charAt(0) == '[') {
                 var header = state.currentHeader;
                 if (header.endsWith("[]"))
                     header = header.substring(0, header.length() - 2);
@@ -815,6 +840,7 @@ public final class OdinParser {
         int rowIndex = 0;
 
         while (true) {
+            if (rowIndex > 0 && state.blankLineAhead()) break;
             state.skipNewlines();
             if (state.isAtEnd()) break;
 

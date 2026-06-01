@@ -417,13 +417,22 @@ public final class FinancialVerbs {
     }
 
     private static DynValue zscore(DynValue[] args, VerbContext ctx) {
-        if (args.length < 3) return DynValue.ofNull();
+        if (args.length < 2) return DynValue.ofNull();
         Double value = toDouble(args[0]);
-        Double mean = toDouble(args[1]);
-        Double stddev = toDouble(args[2]);
-        if (value == null || mean == null || stddev == null) return DynValue.ofNull();
-        if (stddev == 0.0) return DynValue.ofNull();
-        return numericResult((value - mean) / stddev);
+        List<Double> arr = extractDoubles(args[1]);
+        if (value == null || arr == null || arr.isEmpty()) return DynValue.ofNull();
+
+        double mean = 0;
+        for (double v : arr) mean += v;
+        mean /= arr.size();
+        double sumSq = 0;
+        for (double v : arr) sumSq += (v - mean) * (v - mean);
+        double stdDev = Math.sqrt(sumSq / arr.size());
+        if (stdDev == 0.0) return DynValue.ofNull();
+
+        double z = (value - mean) / stdDev;
+        if (Double.isInfinite(z) || Double.isNaN(z)) return DynValue.ofNull();
+        return numericResult(z);
     }
 
     // ── Other ──
@@ -441,12 +450,15 @@ public final class FinancialVerbs {
     }
 
     private static DynValue interpolate(DynValue[] args, VerbContext ctx) {
-        if (args.length < 3) return DynValue.ofNull();
-        Double a = toDouble(args[0]);
-        Double b = toDouble(args[1]);
-        Double t = toDouble(args[2]);
-        if (a == null || b == null || t == null) return DynValue.ofNull();
-        return numericResult(a + (b - a) * t);
+        if (args.length < 5) return DynValue.ofNull();
+        Double x = toDouble(args[0]);
+        Double x1 = toDouble(args[1]);
+        Double y1 = toDouble(args[2]);
+        Double x2 = toDouble(args[3]);
+        Double y2 = toDouble(args[4]);
+        if (x == null || x1 == null || y1 == null || x2 == null || y2 == null) return DynValue.ofNull();
+        if (x2.doubleValue() == x1.doubleValue()) return numericResult(y1);
+        return numericResult(y1 + ((x - x1) * (y2 - y1)) / (x2 - x1));
     }
 
     private static DynValue weightedAvg(DynValue[] args, VerbContext ctx) {

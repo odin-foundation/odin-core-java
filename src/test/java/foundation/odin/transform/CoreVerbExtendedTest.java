@@ -468,7 +468,7 @@ class CoreVerbExtendedTest {
         @Test void padRight_SpaceChar() { assertEquals("hi   ", invoke("padRight", S("hi"), I(5), S(" ")).asString()); }
 
         @Test void pad_AlreadyWide() { assertEquals("hello", invoke("pad", S("hello"), I(3), S("*")).asString()); }
-        @Test void pad_OddPadding() { assertEquals("-ab--", invoke("pad", S("ab"), I(5), S("-")).asString()); }
+        @Test void pad_OddPadding() { assertEquals("ab---", invoke("pad", S("ab"), I(5), S("-")).asString()); }
         @Test void pad_EmptyString() { assertEquals("xxxx", invoke("pad", S(""), I(4), S("x")).asString()); }
     }
 
@@ -642,11 +642,10 @@ class CoreVerbExtendedTest {
         @Test void matches_Null() { assertEquals(false, invoke("matches", Null(), S("x")).asBool()); }
 
         @Test void match_HappyPath() {
-            var result = invoke("match", S("hello world"), S("w\\w+"));
-            assertEquals("world", result.asString());
+            assertTrue(invoke("match", S("hello world"), S("w\\w+")).asBool());
         }
 
-        @Test void match_NoMatch() { assertTrue(invoke("match", S("hello"), S("xyz")).isNull()); }
+        @Test void match_NoMatch() { assertFalse(invoke("match", S("hello"), S("xyz")).asBool()); }
         @Test void match_Null() { assertTrue(invoke("match", Null(), S("x")).isNull()); }
     }
 
@@ -688,9 +687,9 @@ class CoreVerbExtendedTest {
 
     @Nested class WrapCenterTests {
 
-        @Test void wrap_WithPrefixSuffix() { assertEquals("<hello>", invoke("wrap", S("hello"), S("<"), S(">")).asString()); }
-        @Test void wrap_SameChar() { assertEquals("'hello'", invoke("wrap", S("hello"), S("'")).asString()); }
-        @Test void wrap_Null() { assertTrue(invoke("wrap", Null(), S("<"), S(">")).isNull()); }
+        @Test void wrap_WordWraps() { assertEquals("the quick\nbrown fox", invoke("wrap", S("the quick brown fox"), I(10)).asString()); }
+        @Test void wrap_ShorterThanWidth() { assertEquals("hello", invoke("wrap", S("hello"), I(20)).asString()); }
+        @Test void wrap_Null() { assertEquals("", invoke("wrap", Null(), I(10)).asString()); }
 
         @Test void center_AlreadyWide() { assertEquals("hello", invoke("center", S("hello"), I(3), S("-")).asString()); }
         @Test void center_OddPadding() { assertEquals("-ab--", invoke("center", S("ab"), I(5), S("-")).asString()); }
@@ -719,7 +718,7 @@ class CoreVerbExtendedTest {
 
         @Test void clean_Empty() { assertEquals("", invoke("clean", S("")).asString()); }
         @Test void clean_NoControlChars() { assertEquals("hello world", invoke("clean", S("hello world")).asString()); }
-        @Test void clean_PreservesNewlinesTabs() { assertEquals("a\nb\tc\r", invoke("clean", S("a\nb\tc\r")).asString()); }
+        @Test void clean_CollapsesWhitespace() { assertEquals("a b c", invoke("clean", S("a\nb\tc\r")).asString()); }
         @Test void clean_RemovesNullBytes() { assertEquals("abcd", invoke("clean", S("a\0b\u0001c\u0002d")).asString()); }
         @Test void clean_Null() { assertTrue(invoke("clean", Null()).isNull()); }
     }

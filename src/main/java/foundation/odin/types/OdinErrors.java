@@ -414,6 +414,38 @@ public final class OdinErrors {
         return warning;
     }
 
+    // Invalid verb arguments (T002).
+    public static OdinTransformTypes.TransformError invalidVerbArgsError(String verb, String detail) {
+        var error = new OdinTransformTypes.TransformError(
+                "Invalid arguments for '" + verb + "': " + detail);
+        error.setCode(TransformErrorCodes.T002_INVALID_VERB_ARGS);
+        return error;
+    }
+
+    // Field modifier not valid for the target format (T007).
+    public static OdinTransformTypes.TransformWarning invalidModifierWarning(String modifier, String format) {
+        var warning = new OdinTransformTypes.TransformWarning(
+                "Modifier ':" + modifier + "' is not valid for format '" + format + "'");
+        warning.setCode(TransformErrorCodes.T007_INVALID_MODIFIER);
+        return warning;
+    }
+
+    // Fixed-width field position + length exceeds the line width (T010).
+    public static OdinTransformTypes.TransformError positionOverflowError(String field, int pos, int len, int lineWidth) {
+        var error = new OdinTransformTypes.TransformError(
+                "Field '" + field + "' position " + pos + " + length " + len + " exceeds line width " + lineWidth, field);
+        error.setCode(TransformErrorCodes.T010_POSITION_OVERFLOW);
+        return error;
+    }
+
+    // Incompatible unit conversion (T011).
+    public static OdinTransformTypes.TransformError incompatibleConversionError(String verb, String detail) {
+        var error = new OdinTransformTypes.TransformError(
+                "Incompatible conversion in '" + verb + "': " + detail);
+        error.setCode(TransformErrorCodes.T011_INCOMPATIBLE_CONVERSION);
+        return error;
+    }
+
     // ── PatchError ──
 
     public static final class PatchError {

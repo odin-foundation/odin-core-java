@@ -232,16 +232,12 @@ public final class StringVerbs {
     }
 
     private static DynValue pad(DynValue[] args, VerbContext ctx) {
-        if (args.length < 2) return args.length > 0 ? args[0] : DynValue.ofNull();
-        if (args[0].isNull()) return DynValue.ofNull();
+        if (args.length < 3) return DynValue.ofNull();
         var s = toStr(args[0]);
         int width = toInt(args[1]);
-        char padChar = args.length >= 3 ? getPadChar(args[2]) : ' ';
+        char padChar = getPadChar(args[2]);
         if (s.length() >= width) return DynValue.ofString(s);
-        int totalPad = width - s.length();
-        int leftPad = totalPad / 2;
-        int rightPad = totalPad - leftPad;
-        return DynValue.ofString(String.valueOf(padChar).repeat(leftPad) + s + String.valueOf(padChar).repeat(rightPad));
+        return DynValue.ofString(s + String.valueOf(padChar).repeat(width - s.length()));
     }
 
     private static DynValue truncate(DynValue[] args, VerbContext ctx) {
@@ -438,9 +434,7 @@ public final class StringVerbs {
         if (args[0].isNull()) return DynValue.ofNull();
         try {
             var regex = createRegex(toStr(args[1]));
-            var m = regex.matcher(toStr(args[0]));
-            if (!m.find()) return DynValue.ofNull();
-            return DynValue.ofString(m.group());
+            return DynValue.ofBool(regex.matcher(toStr(args[0])).find());
         } catch (Exception e) {
             return DynValue.ofNull();
         }
@@ -449,19 +443,14 @@ public final class StringVerbs {
     private static DynValue extract(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
         if (args[0].isNull()) return DynValue.ofNull();
+        int groupIndex = args.length >= 3 ? toInt(args[2]) : 0;
         try {
             var regex = createRegex(toStr(args[1]));
             var m = regex.matcher(toStr(args[0]));
             if (!m.find()) return DynValue.ofNull();
-            if (m.groupCount() > 0) {
-                var items = new ArrayList<DynValue>();
-                for (int i = 1; i <= m.groupCount(); i++) {
-                    var g = m.group(i);
-                    items.add(g != null ? DynValue.ofString(g) : DynValue.ofNull());
-                }
-                return DynValue.ofArray(items);
-            }
-            return DynValue.ofString(m.group());
+            if (groupIndex < 0 || groupIndex > m.groupCount()) return DynValue.ofNull();
+            var g = m.group(groupIndex);
+            return g != null ? DynValue.ofString(g) : DynValue.ofNull();
         } catch (Exception e) {
             return DynValue.ofNull();
         }
@@ -506,12 +495,27 @@ public final class StringVerbs {
     }
 
     private static DynValue wrap(DynValue[] args, VerbContext ctx) {
-        if (args.length < 2) return args.length > 0 ? args[0] : DynValue.ofNull();
-        if (args[0].isNull()) return DynValue.ofNull();
+        if (args.length < 2) return DynValue.ofNull();
         var s = toStr(args[0]);
-        var prefix = toStr(args[1]);
-        var suffix = args.length >= 3 ? toStr(args[2]) : prefix;
-        return DynValue.ofString(prefix + s + suffix);
+        int width = toInt(args[1]);
+        if (width <= 0) return DynValue.ofNull();
+        if (s.length() <= width) return DynValue.ofString(s);
+
+        var lines = new ArrayList<String>();
+        var line = new StringBuilder();
+        for (var word : s.split("\\s+")) {
+            if (line.length() == 0) {
+                line.append(word);
+            } else if (line.length() + 1 + word.length() <= width) {
+                line.append(' ').append(word);
+            } else {
+                lines.add(line.toString());
+                line.setLength(0);
+                line.append(word);
+            }
+        }
+        if (line.length() > 0) lines.add(line.toString());
+        return DynValue.ofString(String.join("\n", lines));
     }
 
     private static DynValue center(DynValue[] args, VerbContext ctx) {
@@ -548,12 +552,11 @@ public final class StringVerbs {
         if (args.length < 1) return DynValue.ofNull();
         if (args[0].isNull()) return DynValue.ofNull();
         var s = toStr(args[0]);
-        var sb = new StringBuilder(s.length());
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c >= ' ' || c == '\t' || c == '\n' || c == '\r') sb.append(c);
-        }
-        return DynValue.ofString(sb.toString());
+        // Drop control chars (keep tab/newline/CR), normalize Unicode spaces, collapse, trim.
+        String cleaned = s.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "");
+        cleaned = cleaned.replaceAll("[\\u00A0\\u1680\\u2000-\\u200A\\u202F\\u205F\\u3000]", " ");
+        cleaned = cleaned.replaceAll("\\s+", " ").trim();
+        return DynValue.ofString(cleaned);
     }
 
     // ── Text Analysis ──
