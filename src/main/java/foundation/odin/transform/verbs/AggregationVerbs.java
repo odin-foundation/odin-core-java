@@ -12,6 +12,8 @@ public final class AggregationVerbs {
 
     private AggregationVerbs() {}
 
+    private static final double MAX_SAFE_INTEGER = 9007199254740991.0; // 2^53 - 1
+
     public static void register(Map<String, BiFunction<DynValue[], VerbContext, DynValue>> reg) {
         reg.put("accumulate", AggregationVerbs::accumulate);
         reg.put("set", AggregationVerbs::set);
@@ -62,7 +64,20 @@ public final class AggregationVerbs {
         if (args.length == 2) {
             double cv = toDouble(current) != null ? toDouble(current) : 0.0;
             double vv = toDouble(args[1]) != null ? toDouble(args[1]) : 0.0;
-            current = numericResult(cv + vv);
+            double sum = cv + vv;
+
+            // T008: the running sum is no longer exactly representable (non-finite, or
+            // an integer accumulator beyond the safe-integer magnitude). Retain the
+            // last valid value.
+            boolean integerAccumulator = current.getType() == DynValue.Type.Integer;
+            boolean overflowed = !Double.isFinite(sum)
+                    || (integerAccumulator && Math.abs(sum) > MAX_SAFE_INTEGER);
+            if (overflowed) {
+                if (ctx != null) ctx.reportAccumulatorOverflow(accName, sum);
+                return current;
+            }
+
+            current = numericResult(sum);
             if (ctx != null) ctx.getAccumulators().put(accName, current);
             return current;
         }

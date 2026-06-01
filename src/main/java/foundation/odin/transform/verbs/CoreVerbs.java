@@ -127,7 +127,12 @@ public final class CoreVerbs {
         int dotIdx = tableRef.indexOf('.');
         var tableName = dotIdx >= 0 ? tableRef.substring(0, dotIdx) : tableRef;
         var table = ctx.getTables().get(tableName);
-        if (table != null && table.getDefault() != null)
+        if (table == null) {
+            // T003: the referenced table was never declared.
+            ctx.reportTableMissing(tableName);
+            return DynValue.ofNull();
+        }
+        if (table.getDefault() != null)
             return table.getDefault();
 
         var matchKey = Arrays.stream(keys).map(CoreVerbs::coerceKeyStr)

@@ -480,6 +480,7 @@ public final class OdinTransformTypes {
     public static final class TransformWarning {
         private String message = "";
         private String path;
+        private String code;
 
         public TransformWarning() {}
         public TransformWarning(String message) { this.message = message; }
@@ -489,5 +490,8 @@ public final class OdinTransformTypes {
 
         public String getPath() { return path; }
         public void setPath(String path) { this.path = path; }
+
+        public String getCode() { return code; }
+        public void setCode(String code) { this.code = code; }
     }
 }

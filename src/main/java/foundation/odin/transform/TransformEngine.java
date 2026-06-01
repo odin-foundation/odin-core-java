@@ -13,6 +13,17 @@ public final class TransformEngine {
 
     private TransformEngine() {}
 
+    // Carries a stable transform error code thrown during expression evaluation so
+    // the mapping handler can preserve the code instead of collapsing to a generic error.
+    private static final class CodedTransformException extends RuntimeException {
+        private final TransformError transformError;
+        CodedTransformException(TransformError error) {
+            super(error.getMessage());
+            this.transformError = error;
+        }
+        TransformError getTransformError() { return transformError; }
+    }
+
     // ── Verb Registry ──
 
     private static final VerbRegistry verbRegistry = new VerbRegistry();
@@ -54,12 +65,26 @@ public final class TransformEngine {
         public DynValue getGlobalOutput() { return globalOutput; }
         public String getOnMissing() { return onMissing; }
 
-        // Report a lookup miss honoring the onMissing policy (default silent null).
+        // Report a lookup key miss honoring the onMissing policy (default silent null).
         public void reportMissing(String tableName, String key) {
             if ("fail".equals(onMissing)) {
                 if (errors != null) errors.add(OdinErrors.lookupKeyNotFoundError(tableName, key));
             } else if ("warn".equals(onMissing)) {
                 if (warnings != null) warnings.add(OdinErrors.lookupKeyNotFoundWarning(tableName, key));
+            }
+        }
+
+        // Record an accumulator overflow (T008); always an error regardless of onMissing.
+        public void reportAccumulatorOverflow(String accumulator, double value) {
+            if (errors != null) errors.add(OdinErrors.accumulatorOverflowError(accumulator, value));
+        }
+
+        // Report an undeclared lookup table (T003) honoring the onMissing policy.
+        public void reportTableMissing(String tableName) {
+            if ("fail".equals(onMissing)) {
+                if (errors != null) errors.add(OdinErrors.lookupTableNotFoundError(tableName));
+            } else if ("warn".equals(onMissing)) {
+                if (warnings != null) warnings.add(OdinErrors.lookupTableNotFoundWarning(tableName));
             }
         }
     }
@@ -85,7 +110,62 @@ public final class TransformEngine {
         String onMissing;
     }
 
+    // ── Transform Options ──
+
+    @FunctionalInterface
+    public interface ImportResolver {
+        // Resolve an @import path to ODIN transform text, or null to leave it unresolved.
+        String resolve(String path);
+    }
+
+    public static final class TransformOptions {
+        private ImportResolver importResolver;
+
+        public ImportResolver getImportResolver() { return importResolver; }
+        public TransformOptions setImportResolver(ImportResolver r) { this.importResolver = r; return this; }
+    }
+
+    // Merge imported lookup tables, constants, accumulators, and named segments into
+    // the transform. Local declarations win over imported ones; imported segments are
+    // appended so their mappings remain emittable.
+    private static void resolveImports(OdinTransform transform, ImportResolver resolver) {
+        var seen = new HashSet<String>();
+        for (var imp : transform.getImports()) {
+            if (!seen.add(imp.getPath())) continue;
+            var text = resolver.resolve(imp.getPath());
+            if (text == null) continue;
+
+            OdinTransform imported;
+            try {
+                imported = TransformParser.parse(text);
+            } catch (Exception e) {
+                continue;
+            }
+
+            for (var e : imported.getTables().entrySet())
+                transform.getTables().putIfAbsent(e.getKey(), e.getValue());
+            for (var e : imported.getConstants().entrySet())
+                transform.getConstants().putIfAbsent(e.getKey(), e.getValue());
+            for (var e : imported.getAccumulators().entrySet())
+                transform.getAccumulators().putIfAbsent(e.getKey(), e.getValue());
+
+            var existingPaths = new HashSet<String>();
+            for (var s : transform.getSegments()) existingPaths.add(s.getPath());
+            for (var segment : imported.getSegments()) {
+                if (segment.getPath().isEmpty() || existingPaths.contains(segment.getPath())) continue;
+                transform.getSegments().add(segment);
+            }
+        }
+    }
+
     // ── Public Entry Point ──
+
+    public static TransformResult execute(OdinTransform transform, DynValue source, TransformOptions options) {
+        if (options != null && options.getImportResolver() != null && !transform.getImports().isEmpty()) {
+            resolveImports(transform, options.getImportResolver());
+        }
+        return execute(transform, source);
+    }
 
     public static TransformResult execute(OdinTransform transform, DynValue source) {
         // Check for multi-record mode (discriminator dispatch)
@@ -157,8 +237,17 @@ public final class TransformEngine {
         }
 
         // Format output
-        String formatted = formatOutput(output, transform.getTarget().getFormat(),
-                transform.getTarget().getOptions(), transform.getSegments(), ctx.fieldModifiers);
+        String targetFormat = resolveTargetFormat(transform);
+        if (targetFormat == null || targetFormat.isEmpty()) targetFormat = "json";
+        String formatted;
+        if (!isKnownFormat(targetFormat)) {
+            // T006: unregistered target format.
+            ctx.errors.add(OdinErrors.invalidOutputFormatError(targetFormat));
+            formatted = "";
+        } else {
+            formatted = formatOutput(output, targetFormat,
+                    transform.getTarget().getOptions(), transform.getSegments(), ctx.fieldModifiers);
+        }
 
         var result = new TransformResult();
         result.setSuccess(ctx.errors.isEmpty());
@@ -168,6 +257,19 @@ public final class TransformEngine {
         result.setWarnings(ctx.warnings);
         result.setOutputModifiers(ctx.fieldModifiers);
         return result;
+    }
+
+    // Resolve the effective target format: the explicit {$target} format, else the
+    // emit side of the direction header.
+    private static String resolveTargetFormat(OdinTransform transform) {
+        var fmt = transform.getTarget() != null ? transform.getTarget().getFormat() : null;
+        if (fmt != null && !fmt.isEmpty()) return fmt;
+        var direction = transform.getMetadata() != null ? transform.getMetadata().getDirection() : null;
+        if (direction != null && direction.contains("->")) {
+            var parts = direction.split("->");
+            if (parts.length > 1) return parts[parts.length - 1].trim();
+        }
+        return fmt;
     }
 
     // ── Multi-Record Execution ──
@@ -537,8 +639,23 @@ public final class TransformEngine {
         if (!loopDirectives.isEmpty() && segment.isArray()) {
             var resultItems = new ArrayList<DynValue>();
             String fromPath = directiveValue(segment, "from");
-            iterateLoops(loopDirectives, 0, ctx, segment, fromPath, segment.getCounterName(),
-                    null, currentPrefix, resultItems, null);
+            // A non-array loop source raises a coded error honoring onError.
+            try {
+                iterateLoops(loopDirectives, 0, ctx, segment, fromPath, segment.getCounterName(),
+                        null, currentPrefix, resultItems, null);
+            } catch (CodedTransformException e) {
+                var onError = ctx.onError != null ? ctx.onError : "fail";
+                if ("fail".equals(onError)) {
+                    ctx.errors.add(e.getTransformError());
+                } else if ("warn".equals(onError)) {
+                    var te = e.getTransformError();
+                    var w = new TransformWarning(te.getMessage());
+                    w.setPath(te.getPath());
+                    w.setCode(te.getCode());
+                    ctx.warnings.add(w);
+                }
+                return output;
+            }
 
             if (isSink) return output;
 
@@ -721,7 +838,15 @@ public final class TransformEngine {
         }
 
         var items = itemsVal != null ? itemsVal.asArray() : null;
-        if (items == null) return; // non-array source → no rows
+        if (items == null) {
+            // A present non-array scalar is a T009 error; an absent/null source
+            // yields zero rows silently.
+            if (itemsVal != null && !itemsVal.isNull()) {
+                throw new CodedTransformException(
+                        OdinErrors.loopSourceNotArrayError(loopPath, segment.getPath()));
+            }
+            return;
+        }
 
         boolean isValueOnly = segment.getMappings().stream().allMatch(m -> m.getTarget().equals("_"));
 
@@ -804,8 +929,22 @@ public final class TransformEngine {
         var loopDirectives = collectLoopDirectives(segment);
         if (!loopDirectives.isEmpty() && segment.isArray()) {
             String fromPath = directiveValue(segment, "from");
-            iterateLoops(loopDirectives, 0, ctx, segment, fromPath, segment.getCounterName(),
-                    null, cleanName, new ArrayList<>(), render);
+            try {
+                iterateLoops(loopDirectives, 0, ctx, segment, fromPath, segment.getCounterName(),
+                        null, cleanName, new ArrayList<>(), render);
+            } catch (CodedTransformException e) {
+                var onError = ctx.onError != null ? ctx.onError : "fail";
+                if ("fail".equals(onError)) {
+                    ctx.errors.add(e.getTransformError());
+                } else if ("warn".equals(onError)) {
+                    var te = e.getTransformError();
+                    var w = new TransformWarning(te.getMessage());
+                    w.setPath(te.getPath());
+                    w.setCode(te.getCode());
+                    ctx.warnings.add(w);
+                }
+                return output;
+            }
         } else {
             render.accept(ctx.loopVars.get("_item"));
         }
@@ -938,6 +1077,32 @@ public final class TransformEngine {
             // Validation modifiers: :validate, :enum, :range (honors onValidation policy).
             if (!validateFieldValue(value, mapping, ctx)) return output;
 
+            // Missing source path: a :required field always fails (T005); an ordinary
+            // field honors the onMissing policy (fail -> T005, warn -> warning,
+            // skip/default -> keep null). A path present-but-null is not "missing".
+            boolean required = mapping.getModifiers() != null && mapping.getModifiers().isRequired();
+            if (value.isNull() && isCopySourceAbsent(mapping, ctx, currentSource)) {
+                var rawPath = mapping.getExpression() instanceof CopyExpression cp
+                        ? cp.getPath() : mapping.getTarget();
+                var path = rawPath.startsWith(".") ? rawPath.substring(1) : rawPath;
+                if (path.startsWith("@")) path = path.substring(1);
+                if (required) {
+                    ctx.errors.add(OdinErrors.sourcePathNotFoundError(path, mapping.getTarget()));
+                    return output;
+                }
+                if ("fail".equals(ctx.onMissing)) {
+                    ctx.errors.add(OdinErrors.sourcePathNotFoundError(path, mapping.getTarget()));
+                    return output;
+                }
+                if ("warn".equals(ctx.onMissing)) {
+                    ctx.warnings.add(OdinErrors.sourcePathNotFoundWarning(path, mapping.getTarget()));
+                }
+            } else if (required && value.isNull()) {
+                // Required field present but explicitly null.
+                ctx.errors.add(OdinErrors.sourceMissingError(mapping.getTarget()));
+                return output;
+            }
+
             // Confidential during processing
             if (mapping.getModifiers() != null && mapping.getModifiers().isConfidential() && ctx.enforceConfidential != null) {
                 value = applyConfidentialToValue(value, ctx.enforceConfidential);
@@ -962,8 +1127,28 @@ public final class TransformEngine {
                     ctx.fieldModifiers.put(fullKey, mapping.getModifiers());
                 }
             }
+        } catch (CodedTransformException e) {
+            // Coded errors carry a stable T-code; preserve it under fail/warn.
+            var onError = ctx.onError != null ? ctx.onError : "fail";
+            var te = e.getTransformError();
+            te.setPath(mapping.getTarget());
+            if ("fail".equals(onError)) {
+                ctx.errors.add(te);
+            } else if ("warn".equals(onError)) {
+                var w = new TransformWarning(te.getMessage());
+                w.setPath(mapping.getTarget());
+                w.setCode(te.getCode());
+                ctx.warnings.add(w);
+            }
         } catch (Exception e) {
-            ctx.errors.add(new TransformError(e.getMessage(), mapping.getTarget()));
+            var onError = ctx.onError != null ? ctx.onError : "fail";
+            if ("warn".equals(onError)) {
+                var w = new TransformWarning(e.getMessage());
+                w.setPath(mapping.getTarget());
+                ctx.warnings.add(w);
+            } else if (!"skip".equals(onError) && !"ignore".equals(onError)) {
+                ctx.errors.add(new TransformError(e.getMessage(), mapping.getTarget()));
+            }
         }
         return output;
     }
@@ -1251,7 +1436,8 @@ public final class TransformEngine {
             if (call.isCustom()) {
                 return evaluatedArgs.length > 0 ? evaluatedArgs[0] : DynValue.ofNull();
             }
-            throw new UnsupportedOperationException("Unknown verb: " + call.getVerb());
+            // T001: unknown built-in verb.
+            throw new CodedTransformException(OdinErrors.unknownVerbError(call.getVerb()));
         }
 
         var verbCtx = new VerbContext();
@@ -1404,6 +1590,73 @@ public final class TransformEngine {
         }
 
         return resolvePath(source, path, constants, accumulators);
+    }
+
+    // Whether a mapping copies a source path that is absent (no such key) — distinct
+    // from a path present with a null value. Only plain copy expressions qualify;
+    // verbs, literals, objects, special and counter paths are never "missing source".
+    private static boolean isCopySourceAbsent(FieldMapping mapping, ExecContext ctx, DynValue currentSource) {
+        if (!(mapping.getExpression() instanceof CopyExpression copy)) return false;
+        if (mapping.getModifiers() != null && mapping.getModifiers().isRequired()
+                && findMappingDirective(mapping, "object") != null) {
+            return false;
+        }
+        if (findMappingDirective(mapping, "default") != null
+                || findMappingDirective(mapping, "object") != null) {
+            return false;
+        }
+        var path = copy.getPath();
+        if (path == null || path.isEmpty()) return false;
+        if (path.startsWith("$") || path.equals("_index") || path.equals("_item")
+                || path.equals("_length")) return false;
+        if (ctx.loopVars.containsKey(path)) return false;
+        if (resolveLoopAlias(path, ctx) != null) return false;
+
+        String clean = path.startsWith("@") ? path.substring(1) : path;
+        DynValue target;
+        String targetPath;
+        if (clean.startsWith(".")) {
+            target = currentSource != null ? currentSource : ctx.source;
+            targetPath = clean.substring(1);
+        } else {
+            int dot = clean.indexOf('.');
+            String first = dot >= 0 ? clean.substring(0, dot) : clean;
+            if (ctx.loopAliases.contains(first)) return false;
+            target = ctx.source;
+            targetPath = clean;
+        }
+        return targetPath.isEmpty() ? false : !pathPresent(target, targetPath);
+    }
+
+    // Whether every segment of a dotted/indexed path exists on the value.
+    private static boolean pathPresent(DynValue value, String path) {
+        if (value == null) return false;
+        var segments = parsePathSegments(path);
+        var current = value;
+        for (var seg : segments) {
+            if (current == null || current.isNull()) return false;
+            if (seg.index >= 0) {
+                if (!seg.field.isEmpty()) {
+                    if (!hasField(current, seg.field)) return false;
+                    current = current.get(seg.field);
+                    if (current == null || current.isNull()) return false;
+                }
+                if (current.asArray() == null || seg.index >= current.asArray().size()) return false;
+                current = current.getIndex(seg.index);
+            } else {
+                if (!hasField(current, seg.field)) return false;
+                current = current.get(seg.field);
+            }
+            if (current == null) return false;
+        }
+        return true;
+    }
+
+    private static boolean hasField(DynValue obj, String field) {
+        var entries = obj.asObject();
+        if (entries == null) return false;
+        for (var e : entries) if (e.getKey().equals(field)) return true;
+        return false;
     }
 
     private static DynValue resolveSubPath(DynValue value, String path) {
@@ -2019,6 +2272,13 @@ public final class TransformEngine {
     }
 
     // ── Output Formatting ──
+
+    private static final Set<String> KNOWN_FORMATS = Set.of(
+            "odin", "json", "xml", "csv", "fixed-width", "flat", "properties");
+
+    private static boolean isKnownFormat(String format) {
+        return format != null && KNOWN_FORMATS.contains(format.toLowerCase());
+    }
 
     private static String formatOutput(DynValue output, String targetFormat,
             Map<String, String> options, List<TransformSegment> segments,

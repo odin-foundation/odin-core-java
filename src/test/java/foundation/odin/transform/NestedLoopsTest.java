@@ -195,7 +195,7 @@ class NestedLoopsTest {
     @Nested
     class NonArraySourceTests {
         @Test
-        void innerNonArraySourceYieldsNoRowsNoError() {
+        void innerNonArraySourceRaisesT009() {
             var result = run("""
                     {rows[]}
                     :loop vehicles :as veh
@@ -205,13 +205,12 @@ class NestedLoopsTest {
                     """,
                     "{\"vehicles\":[{\"vin\":\"V1\",\"coverages\":\"not-an-array\"}]}");
 
-            assertTrue(result.isSuccess());
-            assertTrue(result.getErrors().isEmpty());
-            assertEquals(0, rows(result).asArray().size());
+            assertFalse(result.isSuccess());
+            assertEquals("T009", result.getErrors().get(0).getCode());
         }
 
         @Test
-        void outerNonArraySourceYieldsEmptyResult() {
+        void outerNonArraySourceRaisesT009() {
             var result = run("""
                     {rows[]}
                     :loop vehicles :as veh
@@ -221,7 +220,21 @@ class NestedLoopsTest {
                     """,
                     "{\"vehicles\":\"nope\"}");
 
+            assertFalse(result.isSuccess());
+            assertEquals("T009", result.getErrors().get(0).getCode());
+        }
+
+        @Test
+        void absentLoopSourceYieldsNoRowsNoError() {
+            var result = run("""
+                    {rows[]}
+                    :loop vehicles :as veh
+                    vin = "@veh.vin"
+                    """,
+                    "{\"other\":1}");
+
             assertTrue(result.isSuccess());
+            assertTrue(result.getErrors().isEmpty());
             assertEquals(0, rows(result).asArray().size());
         }
     }

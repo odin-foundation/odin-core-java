@@ -338,6 +338,82 @@ public final class OdinErrors {
         return error;
     }
 
+    // Unknown verb (T001).
+    public static OdinTransformTypes.TransformError unknownVerbError(String verb) {
+        var error = new OdinTransformTypes.TransformError("Unknown verb: " + verb);
+        error.setCode(TransformErrorCodes.T001_UNKNOWN_VERB);
+        return error;
+    }
+
+    // Lookup table not declared (T003) — distinct from a missing key (T004).
+    public static OdinTransformTypes.TransformError lookupTableNotFoundError(String tableName) {
+        var error = new OdinTransformTypes.TransformError("Lookup table not found: " + tableName);
+        error.setCode(TransformErrorCodes.T003_LOOKUP_TABLE_NOT_FOUND);
+        return error;
+    }
+
+    public static OdinTransformTypes.TransformWarning lookupTableNotFoundWarning(String tableName) {
+        var warning = new OdinTransformTypes.TransformWarning("Lookup table not found: " + tableName);
+        warning.setCode(TransformErrorCodes.T003_LOOKUP_TABLE_NOT_FOUND);
+        return warning;
+    }
+
+    // Source path not resolvable (T005).
+    public static OdinTransformTypes.TransformError sourcePathNotFoundError(String path, String field) {
+        var error = new OdinTransformTypes.TransformError("Source path not found: " + path, field);
+        error.setCode(TransformErrorCodes.T005_SOURCE_PATH_NOT_FOUND);
+        return error;
+    }
+
+    public static OdinTransformTypes.TransformWarning sourcePathNotFoundWarning(String path, String field) {
+        var warning = new OdinTransformTypes.TransformWarning("Source path not found: " + path);
+        warning.setPath(field);
+        warning.setCode(TransformErrorCodes.T005_SOURCE_PATH_NOT_FOUND);
+        return warning;
+    }
+
+    // Required field present but null (legacy SOURCE_MISSING).
+    public static OdinTransformTypes.TransformError sourceMissingError(String field) {
+        var error = new OdinTransformTypes.TransformError(
+                "Required field '" + field + "' is missing or null", field);
+        error.setCode("SOURCE_MISSING");
+        return error;
+    }
+
+    // Invalid or unsupported output format (T006).
+    public static OdinTransformTypes.TransformError invalidOutputFormatError(String format) {
+        var error = new OdinTransformTypes.TransformError(
+                "Invalid or unsupported output format: " + format);
+        error.setCode(TransformErrorCodes.T006_INVALID_OUTPUT_FORMAT);
+        return error;
+    }
+
+    // Accumulator running sum no longer exactly representable (T008).
+    public static OdinTransformTypes.TransformError accumulatorOverflowError(String accumulator, double value) {
+        String shown = (value == Math.floor(value) && !Double.isInfinite(value))
+                ? Long.toString((long) value) : Double.toString(value);
+        var error = new OdinTransformTypes.TransformError(
+                "Accumulator '" + accumulator + "' overflow with value " + shown);
+        error.setCode(TransformErrorCodes.T008_ACCUMULATOR_OVERFLOW);
+        return error;
+    }
+
+    // Loop source path does not resolve to an array (T009).
+    public static OdinTransformTypes.TransformError loopSourceNotArrayError(String path, String segment) {
+        var error = new OdinTransformTypes.TransformError(
+                "Loop source path '" + path + "' does not resolve to an array", segment);
+        error.setCode(TransformErrorCodes.T009_LOOP_SOURCE_NOT_ARRAY);
+        return error;
+    }
+
+    public static OdinTransformTypes.TransformWarning loopSourceNotArrayWarning(String path, String segment) {
+        var warning = new OdinTransformTypes.TransformWarning(
+                "Loop source path '" + path + "' does not resolve to an array");
+        warning.setPath(segment);
+        warning.setCode(TransformErrorCodes.T009_LOOP_SOURCE_NOT_ARRAY);
+        return warning;
+    }
+
     // ── PatchError ──
 
     public static final class PatchError {
