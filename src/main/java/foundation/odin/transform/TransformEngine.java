@@ -72,6 +72,7 @@ public final class TransformEngine {
         Map<String, DynValue> accumulators;
         Map<String, LookupTable> tables;
         Map<String, DynValue> loopVars = new LinkedHashMap<>();
+        Set<String> loopAliases = new HashSet<>();
         Map<String, BiFunction<DynValue[], VerbContext, DynValue>> verbs;
         List<TransformWarning> warnings = new ArrayList<>();
         List<TransformError> errors = new ArrayList<>();
@@ -514,6 +515,11 @@ public final class TransformEngine {
         String currentPrefix = isRoot ? pathPrefix
                 : (pathPrefix.isEmpty() ? cleanName : pathPrefix + "." + cleanName);
 
+        // Literal block: emit interpolated text lines instead of field mappings.
+        if (hasDirective(segment, "literal")) {
+            return processLiteralSegment(segment, ctx, output, cleanName, isRoot);
+        }
+
         // Computation-only sink: a `_`-prefixed section runs for side effects only
         // (accumulators, verbs) and never appears in the output.
         boolean isSink = name.startsWith("_") && !isRoot && arrayIndex == null;
@@ -526,7 +532,25 @@ public final class TransformEngine {
             return output;
         }
 
-        // Array loop
+        // Array loop (one or more :loop directives drive a nested cross-product).
+        var loopDirectives = collectLoopDirectives(segment);
+        if (!loopDirectives.isEmpty() && segment.isArray()) {
+            var resultItems = new ArrayList<DynValue>();
+            String fromPath = directiveValue(segment, "from");
+            iterateLoops(loopDirectives, 0, ctx, segment, fromPath, segment.getCounterName(),
+                    null, currentPrefix, resultItems, null);
+
+            if (isSink) return output;
+
+            var arrayResult = DynValue.ofArray(resultItems);
+            if (!isRoot) {
+                setPath(output, cleanName, arrayResult);
+            } else {
+                output = arrayResult;
+            }
+            return output;
+        }
+        // Legacy single-source loop with no loop directive.
         if (segment.getSourcePath() != null) {
             var arrayVal = resolvePath(ctx.source, segment.getSourcePath(), ctx.constants, ctx.accumulators);
             var items = arrayVal != null && arrayVal.asArray() != null ? arrayVal.asArray() : new ArrayList<DynValue>();
@@ -637,6 +661,243 @@ public final class TransformEngine {
         }
 
         return output;
+    }
+
+    // ── Loop / Literal Directive Helpers ──
+
+    private static boolean hasDirective(TransformSegment segment, String type) {
+        for (var d : segment.getDirectives()) {
+            if (type.equals(d.getDirectiveType())) return true;
+        }
+        return false;
+    }
+
+    private static String directiveValue(TransformSegment segment, String type) {
+        for (var d : segment.getDirectives()) {
+            if (type.equals(d.getDirectiveType())) return d.getValue();
+        }
+        return null;
+    }
+
+    private static List<SegmentDirective> collectLoopDirectives(TransformSegment segment) {
+        var loops = new ArrayList<SegmentDirective>();
+        for (var d : segment.getDirectives()) {
+            if ("loop".equals(d.getDirectiveType())) loops.add(d);
+        }
+        return loops;
+    }
+
+    // Drive one or more :loop directives as a nested cross-product. Each level binds
+    // its alias and current item, then recurses into the next loop; the innermost
+    // level emits one result element per item. Relative inner paths (`.field`) resolve
+    // against the enclosing item. A non-array source at any level yields no rows.
+    private static void iterateLoops(List<SegmentDirective> loops, int depth, ExecContext ctx,
+            TransformSegment segment, String firstFrom, String counterName,
+            DynValue currentItem, String currentPrefix, List<DynValue> results,
+            java.util.function.Consumer<DynValue> onItem) {
+        var loop = loops.get(depth);
+        boolean isOutermost = depth == 0;
+        boolean isInnermost = depth == loops.size() - 1;
+
+        // Outermost: _from > loop value > segment path; inner loops resolve relative to the outer item.
+        String loopPath = isOutermost
+                ? firstNonEmpty(firstFrom, loop.getValue(), segment.getName())
+                : (loop.getValue() != null ? loop.getValue() : "");
+        if (loopPath.startsWith("@")) loopPath = loopPath.substring(1);
+        if (loopPath.endsWith("[]")) loopPath = loopPath.substring(0, loopPath.length() - 2);
+
+        DynValue itemsVal;
+        if (loopPath.startsWith(".")) {
+            itemsVal = currentItem != null ? resolveSubPath(currentItem, loopPath.substring(1)) : DynValue.ofNull();
+        } else if (isOutermost) {
+            itemsVal = resolvePath(ctx.source, loopPath, ctx.constants, ctx.accumulators);
+        } else {
+            String first = loopPath.contains(".") ? loopPath.substring(0, loopPath.indexOf('.')) : loopPath;
+            if (ctx.loopAliases.contains(first)) {
+                itemsVal = resolveLoopAlias(loopPath, ctx);
+            } else {
+                itemsVal = currentItem != null ? resolveSubPath(currentItem, loopPath) : DynValue.ofNull();
+            }
+        }
+
+        var items = itemsVal != null ? itemsVal.asArray() : null;
+        if (items == null) return; // non-array source → no rows
+
+        boolean isValueOnly = segment.getMappings().stream().allMatch(m -> m.getTarget().equals("_"));
+
+        for (int idx = 0; idx < items.size(); idx++) {
+            var item = items.get(idx);
+
+            String alias = loop.getAlias();
+            DynValue prevAliasVal = null;
+            boolean hadAlias = false;
+            if (alias != null && !alias.isEmpty()) {
+                hadAlias = ctx.loopVars.containsKey(alias);
+                prevAliasVal = ctx.loopVars.get(alias);
+                ctx.loopVars.put(alias, item);
+                ctx.loopAliases.add(alias);
+            }
+            ctx.loopVars.put("_item", item);
+            ctx.loopVars.put("_index", DynValue.ofInteger(idx));
+            ctx.loopVars.put("_length", DynValue.ofInteger(items.size()));
+            // Innermost loop owns the counter; it resets per enclosing item.
+            if (isInnermost && counterName != null && !counterName.isEmpty()) {
+                ctx.loopVars.put(counterName, DynValue.ofInteger(idx));
+            }
+
+            if (!isInnermost) {
+                iterateLoops(loops, depth + 1, ctx, segment, null, counterName,
+                        item, currentPrefix, results, onItem);
+            } else if (onItem != null) {
+                onItem.accept(item);
+            } else {
+                var rowOutput = DynValue.ofObject(new ArrayList<>());
+                for (var mapping : segment.getMappings()) {
+                    if (mapping.getTarget().equals("_")) {
+                        try {
+                            var val = evaluateExpression(mapping.getExpression(), ctx, item, rowOutput);
+                            val = applyMappingDirectives(val, mapping.getDirectives(), ctx.sourceFormat, mapping.getExpression());
+                            if (isValueOnly) rowOutput = val;
+                        } catch (Exception e) {
+                            ctx.errors.add(new TransformError("mapping '_': " + e.getMessage(), "_"));
+                        }
+                    } else {
+                        rowOutput = processMapping(mapping, ctx, item, rowOutput, currentPrefix);
+                    }
+                }
+                results.add(rowOutput);
+            }
+
+            if (alias != null && !alias.isEmpty()) {
+                if (hadAlias) ctx.loopVars.put(alias, prevAliasVal);
+                else { ctx.loopVars.remove(alias); ctx.loopAliases.remove(alias); }
+            }
+        }
+        if (isOutermost) {
+            ctx.loopVars.remove("_item");
+            ctx.loopVars.remove("_index");
+            ctx.loopVars.remove("_length");
+            if (counterName != null && !counterName.isEmpty()) ctx.loopVars.remove(counterName);
+        }
+    }
+
+    private static String firstNonEmpty(String... vals) {
+        for (var v : vals) {
+            if (v != null && !v.isEmpty()) return v;
+        }
+        return "";
+    }
+
+    // Render a :literal segment to interpolated text lines, once per loop item (or once
+    // when not looping). Lines are stored under a `__literalLines` marker for the formatter.
+    private static DynValue processLiteralSegment(TransformSegment segment, ExecContext ctx,
+            DynValue output, String cleanName, boolean isRoot) {
+        String body = directiveValue(segment, "literalBody");
+        String template = normalizeLiteralBody(body != null ? body : "");
+        var lines = new ArrayList<DynValue>();
+
+        java.util.function.Consumer<DynValue> render = item -> {
+            String rendered = renderLiteral(template, ctx, item);
+            for (var line : rendered.split("\n", -1)) lines.add(DynValue.ofString(line));
+        };
+
+        var loopDirectives = collectLoopDirectives(segment);
+        if (!loopDirectives.isEmpty() && segment.isArray()) {
+            String fromPath = directiveValue(segment, "from");
+            iterateLoops(loopDirectives, 0, ctx, segment, fromPath, segment.getCounterName(),
+                    null, cleanName, new ArrayList<>(), render);
+        } else {
+            render.accept(ctx.loopVars.get("_item"));
+        }
+
+        var marker = DynValue.ofObject(List.of(Map.entry("__literalLines", DynValue.ofArray(lines))));
+        if (!isRoot) {
+            setPath(output, cleanName, marker);
+        }
+        return output;
+    }
+
+    // Strip one leading and one trailing newline so the `"""` delimiters, written on
+    // their own lines, do not contribute blank output lines. Interior blanks are kept.
+    private static String normalizeLiteralBody(String body) {
+        String s = body;
+        if (s.startsWith("\r\n")) s = s.substring(2);
+        else if (s.startsWith("\n")) s = s.substring(1);
+        if (s.endsWith("\r\n")) s = s.substring(0, s.length() - 2);
+        else if (s.endsWith("\n")) s = s.substring(0, s.length() - 1);
+        return s;
+    }
+
+    private static String renderLiteral(String template, ExecContext ctx, DynValue item) {
+        DynValue src = item != null ? item : ctx.source;
+        try {
+            return interpolateLiteralBlock(template, ctx, src);
+        } catch (NestedInterpolationException e) {
+            var err = new TransformError("Nested interpolation is not allowed: ${" + e.getExpr() + "}", "");
+            err.setCode(OdinErrors.TransformErrorCodes.T014_NESTED_INTERPOLATION);
+            ctx.errors.add(err);
+            return "";
+        } catch (RuntimeException e) {
+            // Verb and resolution failures honor the target onError policy.
+            String onError = ctx.onError != null ? ctx.onError : "fail";
+            if ("warn".equals(onError)) {
+                ctx.warnings.add(new TransformWarning(e.getMessage()));
+            } else if (!"ignore".equals(onError) && !"skip".equals(onError)) {
+                ctx.errors.add(new TransformError(e.getMessage(), ""));
+            }
+            return "";
+        }
+    }
+
+    // Render a literal block body, resolving ${@path}, ${@.field}, ${%verb …} per item.
+    // Escapes: \${ → ${, \$ → $, \\ → \. A nested ${ inside an expression is rejected.
+    private static String interpolateLiteralBlock(String template, ExecContext ctx, DynValue src) {
+        var out = new StringBuilder();
+        int i = 0;
+        int len = template.length();
+        while (i < len) {
+            char ch = template.charAt(i);
+            if (ch == '\\') {
+                char next = i + 1 < len ? template.charAt(i + 1) : '\0';
+                if (next == '$' && i + 2 < len && template.charAt(i + 2) == '{') {
+                    out.append("${");
+                    i += 3;
+                    continue;
+                }
+                if (next == '\\') { out.append('\\'); i += 2; continue; }
+                if (next == '$') { out.append('$'); i += 2; continue; }
+                out.append('\\');
+                i += 1;
+                continue;
+            }
+            if (ch == '$' && i + 1 < len && template.charAt(i + 1) == '{') {
+                int close = template.indexOf('}', i + 2);
+                if (close == -1) { out.append(template.substring(i)); break; }
+                String expr = template.substring(i + 2, close);
+                if (expr.contains("${")) throw new NestedInterpolationException(expr);
+                out.append(evaluateInterpolationExpr(expr.trim(), ctx, src));
+                i = close + 1;
+                continue;
+            }
+            out.append(ch);
+            i += 1;
+        }
+        return out.toString();
+    }
+
+    private static String evaluateInterpolationExpr(String expr, ExecContext ctx, DynValue src) {
+        if (expr.startsWith("@") || expr.startsWith("%")) {
+            var fieldExpr = TransformParser.parseInlineExpression(expr);
+            var value = evaluateExpression(fieldExpr, ctx, src, DynValue.ofObject(new ArrayList<>()));
+            return coerceToString(value);
+        }
+        return "${" + expr + "}";
+    }
+
+    private static final class NestedInterpolationException extends RuntimeException {
+        private final String expr;
+        NestedInterpolationException(String expr) { this.expr = expr; }
+        String getExpr() { return expr; }
     }
 
     // ── Mapping Processing ──
@@ -885,6 +1146,9 @@ public final class TransformEngine {
 
                 // Check loop vars
                 if (ctx.loopVars.containsKey(path)) yield ctx.loopVars.get(path);
+                // A loop alias may be addressed with a sub-path: @veh.vin → alias `veh`.
+                var aliasResolved = resolveLoopAlias(path, ctx);
+                if (aliasResolved != null) yield aliasResolved;
                 if (path.startsWith("_item") || path.startsWith("@_item")) {
                     var cleanPath = path.startsWith("@") ? path.substring(1) : path;
                     if (cleanPath.equals("_item")) yield ctx.loopVars.getOrDefault("_item", DynValue.ofNull());
@@ -1020,9 +1284,11 @@ public final class TransformEngine {
                 DynValue resolved;
 
                 var counterAcc = accumulatorCounter(path, ctx);
+                var aliasResolved = accumulatorCounter(path, ctx) == null ? resolveLoopAlias(path, ctx) : null;
                 // Loop vars
                 if (counterAcc != null) resolved = counterAcc;
                 else if (ctx.loopVars.containsKey(path)) resolved = ctx.loopVars.get(path);
+                else if (aliasResolved != null) resolved = aliasResolved;
                 else if (path.startsWith("_item") || path.startsWith("@_item")) {
                     var cleanPath = path.startsWith("@") ? path.substring(1) : path;
                     if (cleanPath.equals("_item")) resolved = ctx.loopVars.getOrDefault("_item", DynValue.ofNull());
@@ -1058,6 +1324,26 @@ public final class TransformEngine {
         if (ctx.accumulators.containsKey(name)) return null;
         var counter = ctx.loopVars.get(name);
         return counter != null ? counter : null;
+    }
+
+    // Resolve a path whose first segment names a bound loop alias (e.g. @veh.vin).
+    // Returns null when the path is not alias-rooted.
+    private static DynValue resolveLoopAlias(String path, ExecContext ctx) {
+        if (path == null || path.isEmpty()) return null;
+        String clean = path.startsWith("@") ? path.substring(1) : path;
+        if (clean.isEmpty() || clean.charAt(0) == '.') return null;
+        int dot = clean.indexOf('.');
+        int bracket = clean.indexOf('[');
+        int end = clean.length();
+        if (dot >= 0) end = Math.min(end, dot);
+        if (bracket >= 0) end = Math.min(end, bracket);
+        String first = clean.substring(0, end);
+        if (!ctx.loopAliases.contains(first)) return null;
+        var aliasValue = ctx.loopVars.get(first);
+        if (aliasValue == null) return null;
+        String rest = clean.length() > end ? clean.substring(end) : "";
+        if (rest.startsWith(".")) rest = rest.substring(1);
+        return rest.isEmpty() ? aliasValue : resolveSubPath(aliasValue, rest);
     }
 
     static DynValue resolvePath(DynValue source, String path, Map<String, DynValue> constants, Map<String, DynValue> accumulators) {

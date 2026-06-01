@@ -216,6 +216,7 @@ public final class OdinTransformTypes {
         private String directiveType = "";
         private String value;
         private FieldExpression expr;
+        private String alias;
 
         public String getDirectiveType() { return directiveType; }
         public void setDirectiveType(String type) { this.directiveType = type; }
@@ -225,6 +226,9 @@ public final class OdinTransformTypes {
 
         public FieldExpression getExpr() { return expr; }
         public void setExpr(FieldExpression expr) { this.expr = expr; }
+
+        public String getAlias() { return alias; }
+        public void setAlias(String alias) { this.alias = alias; }
     }
 
     // ── SegmentItem (discriminated union) ──

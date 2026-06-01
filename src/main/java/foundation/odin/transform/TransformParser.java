@@ -453,10 +453,23 @@ public final class TransformParser {
             }
 
             if (field.startsWith("_")) {
+                // Repeated loops are stored as _loop, _loop2, _loop3...; each becomes a
+                // loop directive so the engine can iterate them as a nested cross-product.
+                if (field.equals("_loop") || field.matches("_loop\\d+")) {
+                    if (sourcePath == null) sourcePath = stripLoopAlias(odinValueToString(value))[0];
+                    directives.add(buildLoopDirective(odinValueToString(value)));
+                    continue;
+                }
                 switch (field) {
-                    case "_loop":
                     case "_from":
                         sourcePath = odinValueToString(value);
+                        directives.add(buildSimpleDirective("from", odinValueToString(value)));
+                        break;
+                    case "_literal":
+                        directives.add(buildSimpleDirective("literal", odinValueToString(value)));
+                        break;
+                    case "_literalBody":
+                        directives.add(buildSimpleDirective("literalBody", odinValueToString(value)));
                         break;
                     case "_counter":
                         counterName = odinValueToString(value);
@@ -554,6 +567,33 @@ public final class TransformParser {
         segment.setDirectives(directives);
         segment.setCondition(condition);
         return segment;
+    }
+
+    // Split a loop value into [path, alias]; alias comes from the `:as name` suffix.
+    private static String[] stripLoopAlias(String valueStr) {
+        if (valueStr != null && valueStr.contains(":as")) {
+            int idx = valueStr.indexOf(":as");
+            String path = valueStr.substring(0, idx).trim();
+            String alias = valueStr.substring(idx + 3).trim();
+            return new String[]{path, alias.isEmpty() ? null : alias};
+        }
+        return new String[]{valueStr != null ? valueStr.trim() : "", null};
+    }
+
+    private static SegmentDirective buildLoopDirective(String valueStr) {
+        var parts = stripLoopAlias(valueStr);
+        var directive = new SegmentDirective();
+        directive.setDirectiveType("loop");
+        directive.setValue(parts[0]);
+        directive.setAlias(parts[1]);
+        return directive;
+    }
+
+    private static SegmentDirective buildSimpleDirective(String type, String valueStr) {
+        var directive = new SegmentDirective();
+        directive.setDirectiveType(type);
+        directive.setValue(valueStr != null ? valueStr : "");
+        return directive;
     }
 
     // Build an if/elif/else segment directive. Verb / %-expression / reference

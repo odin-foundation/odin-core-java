@@ -44,6 +44,8 @@ public final class ValueParser {
 
             case QuotedString -> new ParseResult(OdinValue.ofString(token.getValue()), 1);
 
+            case MultilineString -> new ParseResult(OdinValue.ofString(token.getValue()), 1);
+
             case BareWord -> {
                 if ("true".equals(token.getValue()))
                     yield new ParseResult(OdinValue.ofBoolean(true), 1);

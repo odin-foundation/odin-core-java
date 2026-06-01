@@ -312,6 +312,7 @@ public final class OdinErrors {
         public static final String T011_INCOMPATIBLE_CONVERSION = "T011";
         public static final String T012_DANGLING_BRANCH = "T012";
         public static final String T013_VALIDATION_FAILED = "T013";
+        public static final String T014_NESTED_INTERPOLATION = "T014";
 
         private TransformErrorCodes() {}
     }

@@ -128,6 +128,10 @@ public final class Tokenizer {
                 return new Token(TokenType.Equals, startPos, state.pos, startLine, startCol, "=");
 
             case '"':
+                if (state.hasCharAt(1) && state.peekAt(1) == '"'
+                        && state.hasCharAt(2) && state.peekAt(2) == '"') {
+                    return scanMultilineString(state);
+                }
                 return scanQuotedString(state);
 
             case '~':
@@ -289,6 +293,32 @@ public final class Tokenizer {
                 value.append(c);
                 state.advance();
             }
+        }
+
+        throw new OdinParseException(ParseErrorCode.UnterminatedString, startLine, startCol);
+    }
+
+    // Scan a triple-quoted multiline string. Content is captured verbatim and may
+    // span newlines; closes at the next `"""`.
+    private static Token scanMultilineString(State state) {
+        int start = state.pos;
+        int startLine = state.line;
+        int startCol = state.column;
+        state.advance(); // opening "
+        state.advance();
+        state.advance();
+        int contentStart = state.pos;
+
+        while (!state.isAtEnd()) {
+            if (state.peek() == '"' && state.hasCharAt(1) && state.peekAt(1) == '"'
+                    && state.hasCharAt(2) && state.peekAt(2) == '"') {
+                String value = state.source.substring(contentStart, state.pos);
+                state.advance();
+                state.advance();
+                state.advance();
+                return state.makeToken(TokenType.MultilineString, start, startLine, startCol, value);
+            }
+            state.advance();
         }
 
         throw new OdinParseException(ParseErrorCode.UnterminatedString, startLine, startCol);

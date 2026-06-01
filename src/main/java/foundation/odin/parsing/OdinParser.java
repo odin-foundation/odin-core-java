@@ -166,6 +166,16 @@ public final class OdinParser {
                     }
                 }
 
+                case MultilineString -> {
+                    // Bare `"""..."""` body line under a segment → synthetic
+                    // `<header>._literalBody` assignment for the transform layer's :literal.
+                    if (state.currentHeader != null) {
+                        parseBareLiteralBlock(state, assignments);
+                    } else {
+                        state.advance();
+                    }
+                }
+
                 case Newline, Comment -> {
                     boolean wasComment = token.getTokenType() == TokenType.Comment;
                     boolean wasNewline = !wasComment;
@@ -234,7 +244,27 @@ public final class OdinParser {
             }
         }
 
-        String fullPath = state.currentHeader + "._" + name;
+        // Repeated `:loop` lines on one segment each get a distinct path so all survive.
+        String key = "_" + name;
+        if (name.equals("loop")) {
+            String base = state.currentHeader + "._loop";
+            int n = 1;
+            while (assignments.containsKey(n == 1 ? base : base + n)) n++;
+            key = n == 1 ? "_loop" : "_loop" + n;
+        }
+        String fullPath = state.currentHeader + "." + key;
+        if (!assignments.containsKey(fullPath)) {
+            assignments.set(fullPath, OdinValue.ofString(value));
+        }
+    }
+
+    // Parse a bare `"""..."""` body line into a synthetic `<header>._literalBody`
+    // assignment, pairing with the segment's `:literal` directive.
+    private static void parseBareLiteralBlock(ParserState state, OrderedMap<String, OdinValue> assignments) {
+        String value = state.current().getValue();
+        state.advance(); // consume multiline token
+
+        String fullPath = state.currentHeader + "._literalBody";
         if (!assignments.containsKey(fullPath)) {
             assignments.set(fullPath, OdinValue.ofString(value));
         }

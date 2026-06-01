@@ -4,6 +4,7 @@ public enum TokenType {
     Path,
     Equals,
     QuotedString,
+    MultilineString,
     BareWord,
     NumberPrefix,
     IntegerPrefix,

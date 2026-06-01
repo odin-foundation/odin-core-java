@@ -19,6 +19,15 @@ public final class FixedWidthFormatter {
     public static String formatFromSegments(DynValue value, List<TransformSegment> segments, TargetConfig config) {
         if (value == null || segments == null || segments.isEmpty()) return "";
 
+        // Literal-block segments emit pre-rendered interpolated lines verbatim.
+        boolean hasLiteralLines = false;
+        var outerObj = value.asObject();
+        if (outerObj != null) {
+            for (var entry : outerObj) {
+                if (isLiteralLines(entry.getValue())) { hasLiteralLines = true; break; }
+            }
+        }
+
         // Check if any segment has :pos/:len directives
         boolean hasPositionalFields = false;
         for (var seg : segments) {
@@ -27,6 +36,8 @@ public final class FixedWidthFormatter {
                 break;
             }
         }
+
+        if (hasLiteralLines) return formatWithLiteralLines(value, segments, config);
 
         if (!hasPositionalFields) return format(value, config);
 
@@ -89,6 +100,90 @@ public final class FixedWidthFormatter {
             }
         }
 
+        return sb.toString();
+    }
+
+    // Pre-rendered literal-block lines emitted by the engine.
+    private static boolean isLiteralLines(DynValue data) {
+        if (data == null) return false;
+        var obj = data.asObject();
+        if (obj == null) return false;
+        for (var entry : obj) {
+            if ("__literalLines".equals(entry.getKey()) && entry.getValue().asArray() != null) return true;
+        }
+        return false;
+    }
+
+    private static List<DynValue> literalLines(DynValue data) {
+        var obj = data.asObject();
+        if (obj == null) return List.of();
+        for (var entry : obj) {
+            if ("__literalLines".equals(entry.getKey())) {
+                var arr = entry.getValue().asArray();
+                if (arr != null) return arr;
+            }
+        }
+        return List.of();
+    }
+
+    // Emit segments in order; literal segments contribute their rendered lines verbatim,
+    // positional segments are formatted as fixed-width records.
+    private static String formatWithLiteralLines(DynValue value, List<TransformSegment> segments, TargetConfig config) {
+        var outputObj = value.asObject();
+        if (outputObj == null) return "";
+
+        int lineWidth = -1;
+        char padChar = ' ';
+        boolean truncate = true;
+        if (config != null) {
+            var lw = config.getOptions().get("lineWidth");
+            if (lw != null) { try { lineWidth = Integer.parseInt(lw.trim()); } catch (NumberFormatException ignored) {} }
+            var pc = config.getOptions().get("padChar");
+            if (pc != null && !pc.isEmpty()) padChar = pc.charAt(0);
+            if ("false".equals(config.getOptions().get("truncate"))) truncate = false;
+        }
+
+        var sb = new StringBuilder();
+        for (var seg : segments) {
+            var segName = seg.getName();
+            if (segName == null || segName.isEmpty() || segName.equals("$") || segName.equals("_root")) continue;
+            boolean isArray = segName.endsWith("[]");
+            var cleanName = isArray ? segName.substring(0, segName.length() - 2) : segName;
+
+            DynValue segData = null;
+            for (var entry : outputObj) {
+                if (entry.getKey().equals(cleanName)) { segData = entry.getValue(); break; }
+            }
+            if (segData == null) continue;
+
+            if (isLiteralLines(segData)) {
+                for (var line : literalLines(segData)) {
+                    sb.append(line.asString() != null ? line.asString() : "");
+                    sb.append('\n');
+                }
+                continue;
+            }
+
+            var fieldDefs = collectFieldDefs(seg);
+            if (fieldDefs.isEmpty()) continue;
+            if (isArray && segData.getType() == DynValue.Type.Array) {
+                var items = segData.asArray();
+                if (items != null) {
+                    for (var item : items) {
+                        var itemObj = item.asObject();
+                        if (itemObj == null) continue;
+                        sb.append(padToWidth(buildFixedWidthLine(fieldDefs, itemObj), lineWidth, padChar, truncate));
+                        sb.append('\n');
+                    }
+                }
+            } else if (segData.getType() == DynValue.Type.Object) {
+                var obj = segData.asObject();
+                if (obj != null) {
+                    sb.append(padToWidth(buildFixedWidthLine(fieldDefs, obj), lineWidth, padChar, truncate));
+                    sb.append('\n');
+                }
+            }
+        }
         return sb.toString();
     }
 
