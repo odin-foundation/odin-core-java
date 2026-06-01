@@ -43,12 +43,11 @@ public final class FormParser {
         FormMetadata metadata     = extractMetadata(doc);
         PageDefaults pageDefaults = extractPageDefaults(doc);
         ScreenSettings screen     = extractScreen(doc);
-        OdincodeSettings odincode = extractOdincode(doc);
         Map<String, String> i18n  = extractI18n(doc);
         List<FormPage> pages      = extractPages(doc, i18n);
         Map<String, PageTemplate> templates = extractTemplates(split.templateBlocks, i18n);
 
-        return new OdinForm(metadata, pageDefaults, screen, odincode, i18n, pages, templates);
+        return new OdinForm(metadata, pageDefaults, screen, i18n, pages, templates);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -244,15 +243,6 @@ public final class FormParser {
         Double scale = metaNumber(doc, "screen.scale");
         if (scale == null) return null;
         return new ScreenSettings(scale);
-    }
-
-    private static OdincodeSettings extractOdincode(OdinDocument doc) {
-        Boolean enabled = metaBoolean(doc, "odincode.enabled");
-        String zone     = metaString(doc, "odincode.zone");
-        if (enabled == null && zone == null) return null;
-
-        OdincodeZone resolvedZone = OdincodeZone.fromString(zone != null ? zone : "");
-        return new OdincodeSettings(enabled != null ? enabled : false, resolvedZone);
     }
 
     private static Map<String, String> extractI18n(OdinDocument doc) {
@@ -859,11 +849,6 @@ public final class FormParser {
     private static Double metaNumber(OdinDocument doc, String key) {
         OdinValue v = getMeta(doc, key);
         return v != null && v.isNumeric() ? v.asDouble() : null;
-    }
-
-    private static Boolean metaBoolean(OdinDocument doc, String key) {
-        OdinValue v = getMeta(doc, key);
-        return v != null && v.isBoolean() ? v.asBool() : null;
     }
 
     private static String stripLeadingDot(String key) {

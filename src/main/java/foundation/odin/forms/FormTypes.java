@@ -33,8 +33,6 @@ public final class FormTypes {
             PageDefaults pageDefaults,
             /** Screen rendering options ({$.screen}). May be null. */
             ScreenSettings screen,
-            /** Self-digitizing barcode settings ({$.odincode}). May be null. */
-            OdincodeSettings odincode,
             /** Multi-language label dictionary ({$.i18n}). May be null. */
             Map<String, String> i18n,
             /** Ordered list of form pages (page[0], page[1], ...). */
@@ -134,37 +132,6 @@ public final class FormTypes {
     public record ScreenSettings(
             /** Default zoom factor. 1.0 = 100% (no scaling). */
             double scale
-    ) {}
-
-    /**
-     * Placement zone for an Odincode barcode.
-     */
-    public enum OdincodeZone {
-        TOP_CENTER("top-center"), BOTTOM_CENTER("bottom-center");
-
-        private final String value;
-
-        OdincodeZone(String value) { this.value = value; }
-
-        public String getValue() { return value; }
-
-        public static OdincodeZone fromString(String s) {
-            for (OdincodeZone z : values()) {
-                if (z.value.equals(s)) return z;
-            }
-            return BOTTOM_CENTER;
-        }
-    }
-
-    /**
-     * Self-digitizing barcode settings for the Odincode feature.
-     * Corresponds to {@code {$.odincode}}.
-     */
-    public record OdincodeSettings(
-            /** Whether Odincode generation is enabled. */
-            boolean enabled,
-            /** Placement zone for the barcode. */
-            OdincodeZone zone
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
