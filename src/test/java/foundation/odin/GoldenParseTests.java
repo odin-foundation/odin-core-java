@@ -128,6 +128,43 @@ public class GoldenParseTests {
             }
         }
 
+        if (expected.has("currentState")) {
+            JsonObject currentState = expected.getAsJsonObject("currentState");
+            OdinDocument current = foundation.odin.Odin.collapseChain(input);
+
+            if (currentState.has("assignments")) {
+                JsonObject assignments = currentState.getAsJsonObject("assignments");
+                for (String path : assignments.keySet()) {
+                    JsonObject expectedVal = assignments.getAsJsonObject(path);
+                    OdinValue actual = current.get(path);
+                    assertNotNull(actual, "Expected current-state path '" + path + "'");
+                    if (expectedVal.has("type")) {
+                        assertTypeMatch(actual, expectedVal.get("type").getAsString(), path);
+                    }
+                    if (expectedVal.has("value")) {
+                        assertValueMatch(actual, expectedVal, path);
+                    }
+                }
+            }
+
+            if (currentState.has("metadata")) {
+                JsonObject meta = currentState.getAsJsonObject("metadata");
+                for (String key : meta.keySet()) {
+                    OdinValue actual = current.get("$." + key);
+                    assertNotNull(actual, "Expected current-state metadata key '" + key + "'");
+                    assertEquals(meta.get(key).getAsString(), metaString(actual),
+                            "Current-state metadata mismatch at '" + key + "'");
+                }
+            }
+
+            if (currentState.has("absent")) {
+                for (JsonElement absentEl : currentState.getAsJsonArray("absent")) {
+                    String path = absentEl.getAsString();
+                    assertNull(current.get(path), "Expected current-state path '" + path + "' to be absent");
+                }
+            }
+        }
+
         if (expected.has("assignments")) {
             JsonObject assignments = expected.getAsJsonObject("assignments");
             for (String path : assignments.keySet()) {

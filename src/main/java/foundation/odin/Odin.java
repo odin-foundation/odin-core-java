@@ -6,6 +6,7 @@ import foundation.odin.forms.FormParser;
 import foundation.odin.forms.FormRenderer;
 import foundation.odin.forms.FormTypes.OdinForm;
 import foundation.odin.forms.FormTypes.RenderFormOptions;
+import foundation.odin.parsing.ChainCollapse;
 import foundation.odin.parsing.OdinParser;
 import foundation.odin.resolver.ImportResolver;
 import foundation.odin.resolver.SchemaFlattener;
@@ -51,6 +52,32 @@ public final class Odin {
 
     public static List<OdinDocument> parseDocuments(String text) {
         return OdinParser.parseMulti(text, OdinOptions.ParseOptions.DEFAULT);
+    }
+
+    // ── Chain collapse ──
+
+    /**
+     * Collapse a chained ODIN document into its computed current state.
+     *
+     * <p>Later documents overlay earlier ones: a repeated path replaces the earlier value,
+     * {@code field = ~} removes the field and its descendants, and {@code field[] = ~} clears
+     * the array. The resulting document carries only the final document's metadata.
+     *
+     * @param text chained ODIN text (documents separated by {@code ---})
+     * @return document representing the computed current state
+     */
+    public static OdinDocument collapseChain(String text) {
+        return ChainCollapse.collapse(parseDocuments(text));
+    }
+
+    /**
+     * Collapse a pre-parsed list of chained documents into its computed current state.
+     *
+     * @param docs chained documents in order
+     * @return document representing the computed current state
+     */
+    public static OdinDocument collapseChain(List<OdinDocument> docs) {
+        return ChainCollapse.collapse(docs);
     }
 
     public static OdinDocument empty() {

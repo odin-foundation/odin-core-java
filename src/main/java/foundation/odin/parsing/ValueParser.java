@@ -63,9 +63,15 @@ public final class ValueParser {
             case ReferencePrefix -> new ParseResult(OdinValue.ofReference(token.getValue()), 1);
             case BinaryPrefix -> new ParseResult(parseBinary(token.getValue(), token.getLine(), token.getColumn()), 1);
             case DateLiteral -> new ParseResult(parseDateValue(token.getValue(), token.getLine(), token.getColumn()), 1);
-            case TimeLiteral -> new ParseResult(OdinValue.ofTime(token.getValue()), 1);
+            case TimeLiteral -> {
+                validateTime(token.getValue(), token.getLine(), token.getColumn());
+                yield new ParseResult(OdinValue.ofTime(token.getValue()), 1);
+            }
             case DurationLiteral -> new ParseResult(OdinValue.ofDuration(token.getValue()), 1);
-            case TimestampLiteral -> new ParseResult(OdinValue.ofTimestamp(0, token.getValue()), 1);
+            case TimestampLiteral -> {
+                validateTimestamp(token.getValue(), token.getLine(), token.getColumn());
+                yield new ParseResult(OdinValue.ofTimestamp(0, token.getValue()), 1);
+            }
 
             case Path -> {
                 // Path tokens in value position can be temporal values
@@ -77,6 +83,7 @@ public final class ValueParser {
                     }
                 }
                 if (!token.getValue().isEmpty() && token.getValue().charAt(0) == 'T' && token.getValue().indexOf(':') >= 0) {
+                    validateTime(token.getValue(), token.getLine(), token.getColumn());
                     yield new ParseResult(OdinValue.ofTime(token.getValue()), 1);
                 }
                 if (token.getValue().length() > 1 && token.getValue().charAt(0) == 'P') {
@@ -369,6 +376,61 @@ public final class ValueParser {
         }
 
         return new OdinValue.OdinDate(year, month, day, raw);
+    }
+
+    private static final java.util.regex.Pattern TIMESTAMP_PATTERN = java.util.regex.Pattern.compile(
+            "^(\\d{4}-\\d{2}-\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})?$");
+    private static final java.util.regex.Pattern TIME_PATTERN = java.util.regex.Pattern.compile(
+            "^T(\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.\\d+)?)?$");
+
+    // Validate a timestamp semantically: date portion, time components, and tz offset.
+    static void validateTimestamp(String raw, int line, int col) {
+        var match = TIMESTAMP_PATTERN.matcher(raw);
+        if (!match.matches()) {
+            throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col, "invalid timestamp: " + raw);
+        }
+        parseDateValue(match.group(1), line, col);
+        validateTimeComponents(match.group(2), match.group(3), match.group(4), raw, line, col);
+
+        String offset = match.group(5);
+        if (offset != null && !"Z".equals(offset)) {
+            int offHour = Integer.parseInt(offset.substring(1, 3));
+            int offMin = Integer.parseInt(offset.substring(4, 6));
+            if (offHour > 23 || offMin > 59) {
+                throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col,
+                        "Invalid timezone offset: " + offset);
+            }
+        }
+    }
+
+    // Validate a time-only value (THH:MM[:SS[.sss]]).
+    static void validateTime(String raw, int line, int col) {
+        var match = TIME_PATTERN.matcher(raw);
+        if (!match.matches()) {
+            throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col, "invalid time: " + raw);
+        }
+        validateTimeComponents(match.group(1), match.group(2), match.group(3), raw, line, col);
+    }
+
+    // Validate hour/minute/second bounds. Hour 24 only at end-of-day midnight; second 60 (leap) allowed.
+    static void validateTimeComponents(String hourStr, String minStr, String secStr, String raw, int line, int col) {
+        int hour = Integer.parseInt(hourStr);
+        int minute = Integer.parseInt(minStr);
+        int second = secStr != null ? Integer.parseInt(secStr) : 0;
+
+        if (hour == 24) {
+            if (minute != 0 || second != 0) {
+                throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col, "Invalid hour: " + hour + " in " + raw);
+            }
+        } else if (hour > 23) {
+            throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col, "Invalid hour: " + hour + " in " + raw);
+        }
+        if (minute > 59) {
+            throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col, "Invalid minute: " + minute + " in " + raw);
+        }
+        if (second > 60) {
+            throw new OdinParseException(ParseErrorCode.UnexpectedCharacter, line, col, "Invalid second: " + second + " in " + raw);
+        }
     }
 
     static boolean isDateLike(String s) {
