@@ -19,7 +19,8 @@ public final class ValidationEngine {
     private record SchemaMemo(
             TypeRegistry registry,
             List<OdinSchema.ValidationError> schemaErrors,
-            Map<String, OdinSchema.SchemaField> baseFields) {}
+            Map<String, OdinSchema.SchemaField> baseFields,
+            List<Map.Entry<String, OdinSchema.SchemaField>> compositionFields) {}
 
     // Keyed by schema identity; entries are reused across documents validated against
     // the same schema and registry.
@@ -35,7 +36,19 @@ public final class ValidationEngine {
         validateSchemaReferences(schema, registry, schemaErrors);
         var baseFields = expandBaseFields(schema, registry);
 
-        var memo = new SchemaMemo(registry, schemaErrors, baseFields);
+        // Precompute the composition (typeRef) fields once. Composition-free schemas
+        // get an empty list, letting per-document validation skip the field scan
+        // entirely. The base map is made unmodifiable so it can be shared (returned
+        // directly) without risk of a caller mutating the cached copy.
+        var compositionFields = new ArrayList<Map.Entry<String, OdinSchema.SchemaField>>();
+        for (var entry : baseFields.entrySet()) {
+            if (entry.getValue().fieldType() instanceof OdinSchema.SchemaFieldType.TypeRefType) {
+                compositionFields.add(Map.entry(entry.getKey(), entry.getValue()));
+            }
+        }
+
+        var memo = new SchemaMemo(registry, schemaErrors,
+                Collections.unmodifiableMap(baseFields), List.copyOf(compositionFields));
         SCHEMA_MEMO.put(schema, memo);
         return memo;
     }
@@ -89,7 +102,8 @@ public final class ValidationEngine {
         }
 
         // Augment cached schema fields with document-dependent field-level typeRef compositions.
-        var expandedFields = augmentWithPresentCompositions(doc, schema, registry, memo.baseFields());
+        var expandedFields = augmentWithPresentCompositions(
+                doc, schema, registry, memo.baseFields(), memo.compositionFields());
 
         // Validate fields
         for (var fieldEntry : expandedFields.entrySet()) {
@@ -700,13 +714,19 @@ public final class ValidationEngine {
     // fresh map; the cached base map is never mutated.
     private static Map<String, OdinSchema.SchemaField> augmentWithPresentCompositions(
             OdinDocument doc, OdinSchema.SchemaDefinition schema, TypeRegistry registry,
-            Map<String, OdinSchema.SchemaField> baseFields) {
-        var result = new LinkedHashMap<>(baseFields);
+            Map<String, OdinSchema.SchemaField> baseFields,
+        List<Map.Entry<String, OdinSchema.SchemaField>> compositionFields) {
+        // Composition-free schema: nothing to augment, return the cached map as-is.
+        if (compositionFields.isEmpty()) return baseFields;
 
-        for (var entry : baseFields.entrySet()) {
+        // Copy lazily: documents with no present compositions still return the
+        // cached base map untouched instead of duplicating it.
+        Map<String, OdinSchema.SchemaField> result = null;
+
+        for (var entry : compositionFields) {
             String path = entry.getKey();
             var field = entry.getValue();
-            if (!(field.fieldType() instanceof OdinSchema.SchemaFieldType.TypeRefType ref)) continue;
+            var ref = (OdinSchema.SchemaFieldType.TypeRefType) field.fieldType();
 
             var types = new ArrayList<OdinSchema.SchemaType>();
             for (String member : ref.name().split("&")) {
@@ -717,6 +737,7 @@ public final class ValidationEngine {
 
             if (!isObjectPresent(doc, path) && !field.required()) continue;
 
+            if (result == null) result = new LinkedHashMap<>(baseFields);
             for (var type : types) {
                 for (var typeField : type.fields()) {
                     if ("_composition".equals(typeField.name())) continue;
@@ -726,7 +747,7 @@ public final class ValidationEngine {
             }
         }
 
-        return result;
+        return result != null ? result : baseFields;
     }
 
     private static void mergeTypeFields(Map<String, OdinSchema.SchemaField> result,
