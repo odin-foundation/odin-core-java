@@ -223,7 +223,7 @@ public final class ImportResolver {
     private final Map<String, CachedEntry> cache = new HashMap<>();
     private int totalFilesLoaded;
 
-    // Parser delegates (injectable for testing, like .NET)
+    // Parser delegates (injectable for testing)
     private Function<String, OdinDocument> documentParser;
     private Function<String, OdinSchema.SchemaDefinition> schemaParserFn;
 

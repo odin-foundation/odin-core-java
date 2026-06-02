@@ -2334,7 +2334,7 @@ public final class TransformEngine {
                 byte dp = (byte) (decimalPlaces != null ? decimalPlaces : 2);
                 if (val.getType() == DynValue.Type.Float || val.getType() == DynValue.Type.FloatRaw) {
                     double d = val.asDouble();
-                    // Compare F-format to G-format (like .NET): if they differ, trailing zeros matter
+                    // Compare F-format to G-format: if they differ, trailing zeros matter
                     String fixedStr = String.format("%." + dp + "f", d);
                     String gStr = String.valueOf(d);
                     if (!fixedStr.equals(gStr))
@@ -2349,7 +2349,7 @@ public final class TransformEngine {
                     byte actualDp = (byte) (decimalPlaces != null ? decimalPlaces : (s.indexOf('.') >= 0 ? cleaned.length() - cleaned.indexOf('.') - 1 : 2));
                     try {
                         double f = Double.parseDouble(cleaned);
-                        // Use G-format comparison (like .NET) to detect trailing zeros
+                        // Use G-format comparison to detect trailing zeros
                         // String.valueOf(149.5) = "149.5" != "149.50" → CurrencyRaw
                         String rt = String.valueOf(f);
                         if (rt.equals(cleaned))

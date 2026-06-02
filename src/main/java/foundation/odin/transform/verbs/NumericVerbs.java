@@ -145,7 +145,7 @@ public final class NumericVerbs {
         return numericResult(val >= 0 ? Math.floor(val) : Math.ceil(val));
     }
 
-    // ── Mulberry32 PRNG (matches TypeScript seededRandom exactly) ──
+    // ── Mulberry32 seeded PRNG ──
 
     static int stringToSeed(String s) {
         int hash = 0;
@@ -157,7 +157,6 @@ public final class NumericVerbs {
 
     /**
      * Mulberry32 PRNG. Maintains mutable state via int array wrapper.
-     * Produces identical output to TypeScript's seededRandom function.
      */
     static double mulberry32Next(int[] state) {
         state[0] += 0x6D2B79F5;
@@ -263,7 +262,7 @@ public final class NumericVerbs {
             if (d != null) decimals = (int) d.doubleValue();
         }
         double pct = val * 100.0;
-        // Use AwayFromZero rounding to match .NET/JS toFixed behavior
+        // Use AwayFromZero rounding for toFixed behavior
         double factor = Math.pow(10, Math.max(0, decimals));
         double rounded = Math.round(pct * factor) / factor;
         return DynValue.ofString(String.format(Locale.US, "%." + decimals + "f%%", rounded));

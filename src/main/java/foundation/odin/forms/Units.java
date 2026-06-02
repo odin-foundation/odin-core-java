@@ -4,7 +4,6 @@ package foundation.odin.forms;
  * ODIN Forms — Unit Conversion
  *
  * Converts between page units (inch, cm, mm, pt) and CSS pixels at 96 DPI.
- * Mirrors the TypeScript units.ts implementation exactly.
  */
 public final class Units {
 

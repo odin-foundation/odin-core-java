@@ -7,7 +7,6 @@ import java.util.Map;
  * ODIN Forms 1.0 — Java Type Definitions
  *
  * Declarative form definition types for print and screen rendering.
- * Mirrors the TypeScript types.ts definitions exactly.
  *
  * Design: print-first, absolute positioning, bidirectional data binding.
  */

@@ -416,8 +416,7 @@ public final class DateTimeVerbs {
         LocalDateTime dt = parseDt(s);
         if (dt == null) return DynValue.ofNull();
 
-        // .NET DayOfWeek: Sunday=0, Monday=1, ..., Saturday=6
-        // Java DayOfWeek: Monday=1, ..., Sunday=7
+        // Output numbering: Sunday=0, Monday=1, ..., Saturday=6
         int dow = dt.getDayOfWeek().getValue(); // 1=Mon..7=Sun
         int dotNetDow = dow == 7 ? 0 : dow; // Convert to 0=Sun, 1=Mon, ..., 6=Sat
         return DynValue.ofInteger(dotNetDow);
@@ -431,8 +430,8 @@ public final class DateTimeVerbs {
         LocalDateTime dt = parseDt(s);
         if (dt == null) return DynValue.ofNull();
 
-        // Match .NET Calendar.GetWeekOfYear(FirstFourDayWeek, Monday):
-        // .NET counts weeks within the calendar year (never returns week 1 of next year),
+        // Week of year (first four-day week, Monday start):
+        // count weeks within the calendar year (never week 1 of next year),
         // so use weekOfYear() which caps at 52/53 rather than weekOfWeekBasedYear()
         // which can return 1 for late-December dates belonging to next year's ISO week 1.
         WeekFields wf = WeekFields.of(DayOfWeek.MONDAY, 4);

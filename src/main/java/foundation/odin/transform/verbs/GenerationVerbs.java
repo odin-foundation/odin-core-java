@@ -35,7 +35,6 @@ public final class GenerationVerbs {
     /**
      * Generate a deterministic UUID v4 from a seed string.
      * Uses DJB2 hash (starting at 5381/52711) then extracts bytes via bit shifting.
-     * Matches the TypeScript implementation exactly.
      */
     private static String generateSeededUUID(String seed) {
         // DJB2 variant - two hashes for 16 bytes
@@ -49,7 +48,7 @@ public final class GenerationVerbs {
         }
 
         // Generate 16 bytes from the hashes using signed right shift
-        // (matches JavaScript's >> operator, which is signed/arithmetic shift)
+        // (signed/arithmetic shift)
         byte[] bytes = new byte[16];
         for (int i = 0; i < 8; i++) {
             bytes[i] = (byte) ((hash1 >> (i * 4)) & 0xFF);
@@ -60,7 +59,7 @@ public final class GenerationVerbs {
         bytes[6] = (byte) ((bytes[6] & 0x0F) | 0x50); // Version 5
         bytes[8] = (byte) ((bytes[8] & 0x3F) | 0x80); // Variant 10xx
 
-        // Convert to hex string with dashes (matching TypeScript's inline formatting)
+        // Convert to hex string with dashes
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 16; i++) {
             if (i == 4 || i == 6 || i == 8 || i == 10) sb.append('-');

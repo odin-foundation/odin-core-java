@@ -60,7 +60,7 @@ public final class XmlSourceParser {
 
     /**
      * Detect if the element at the reader's current position is self-closing (&lt;tag/&gt;)
-     * by checking the raw XML input. StAX doesn't provide isEmptyElement like .NET XmlReader.
+     * by checking the raw XML input. StAX doesn't expose an isEmptyElement signal.
      */
     private static boolean detectSelfClosing(XMLStreamReader reader, String input) {
         int offset = reader.getLocation().getCharacterOffset();

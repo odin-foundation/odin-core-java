@@ -637,7 +637,7 @@ public final class CollectionVerbs {
         Integer seedVal = args.length >= 3 ? toInt(args[2]) : null;
 
         if (seedVal != null) {
-            // Seeded Fisher-Yates using Mulberry32 (matches TypeScript)
+            // Seeded Fisher-Yates using Mulberry32
             int[] state = { seedVal };
             for (int i = 0; i < n; i++) {
                 int j = i + (int) Math.floor(NumericVerbs.mulberry32Next(state) * (copy.size() - i));
