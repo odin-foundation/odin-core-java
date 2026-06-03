@@ -260,11 +260,11 @@ public final class LogicVerbs {
     }
 
     private static DynValue doAssert(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0)
-            throw new IllegalStateException("assert: requires at least 1 argument");
+        if (args.length == 0) return DynValue.ofNull();
+        // Pass the condition through when truthy; a failing assertion yields null
+        // and the transform continues. A second string argument is diagnostic only.
         if (VerbHelpers.isTruthy(args[0])) return args[0];
-        var message = args.length >= 2 && args[1].asString() != null ? args[1].asString() : "assertion failed";
-        throw new IllegalStateException("assert: " + message);
+        return DynValue.ofNull();
     }
 
     private static DynValue doSwitch(DynValue[] args, VerbContext ctx) {

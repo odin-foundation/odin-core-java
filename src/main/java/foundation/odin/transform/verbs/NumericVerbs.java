@@ -38,6 +38,9 @@ public final class NumericVerbs {
         reg.put("round", NumericVerbs::round);
         reg.put("mod", NumericVerbs::mod);
         reg.put("convertUnit", NumericVerbs::convertUnit);
+        reg.put("gcd", NumericVerbs::gcd);
+        reg.put("lcm", NumericVerbs::lcm);
+        reg.put("factorial", NumericVerbs::factorial);
     }
 
     // ── Helpers ──
@@ -508,5 +511,44 @@ public final class NumericVerbs {
         double result = value * fromFactor / toFactor;
         double rounded = Math.round(result * 1000000.0) / 1000000.0;
         return numericResult(rounded);
+    }
+
+    // Greatest common divisor of two integers.
+    private static DynValue gcd(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        Double da = toDouble(args[0]);
+        Double db = toDouble(args[1]);
+        if (da == null || db == null || !Double.isFinite(da) || !Double.isFinite(db)) return DynValue.ofNull();
+        long a = Math.abs((long) (double) da);
+        long b = Math.abs((long) (double) db);
+        while (b != 0) { long t = b; b = a % b; a = t; }
+        return DynValue.ofInteger(a);
+    }
+
+    // Least common multiple of two integers.
+    private static DynValue lcm(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        Double da = toDouble(args[0]);
+        Double db = toDouble(args[1]);
+        if (da == null || db == null || !Double.isFinite(da) || !Double.isFinite(db)) return DynValue.ofNull();
+        long a = Math.abs((long) (double) da);
+        long b = Math.abs((long) (double) db);
+        if (a == 0 || b == 0) return DynValue.ofInteger(0);
+        long x = a, y = b;
+        while (y != 0) { long t = y; y = x % y; x = t; }
+        long quotient = a / x;
+        long result = quotient * b;
+        if (b != 0 && result / b != quotient) return DynValue.ofNull();
+        return DynValue.ofInteger(result);
+    }
+
+    // n! for 0 <= n <= 18 (stays within safe integer range).
+    private static DynValue factorial(DynValue[] args, VerbContext ctx) {
+        if (args.length < 1) return DynValue.ofNull();
+        Double n = toDouble(args[0]);
+        if (n == null || n != Math.floor(n) || n < 0 || n > 18) return DynValue.ofNull();
+        long result = 1;
+        for (int i = 2; i <= (int) (double) n; i++) result *= i;
+        return DynValue.ofInteger(result);
     }
 }

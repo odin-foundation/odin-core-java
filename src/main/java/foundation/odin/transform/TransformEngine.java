@@ -5,6 +5,7 @@ import foundation.odin.types.OdinTransformTypes.*;
 import foundation.odin.types.OdinTransformTypes.FieldExpression.*;
 import foundation.odin.types.OdinTransformTypes.VerbArg.*;
 import foundation.odin.types.OdinValue.*;
+import foundation.odin.transform.verbs.VerbHelpers;
 
 import java.util.*;
 import java.util.function.BiFunction;
@@ -1235,7 +1236,9 @@ public final class TransformEngine {
                 value = DynValue.ofArray(new ArrayList<>(List.of(value)));
             }
 
-            if (!mapping.getTarget().equals("_")) {
+            // `_`-prefixed targets are computation-only sinks: evaluated for side
+            // effects (accumulators, counters) but never emitted to the output.
+            if (!mapping.getTarget().startsWith("_")) {
                 setPath(output, mapping.getTarget(), value);
 
                 // Record modifiers
@@ -1550,28 +1553,17 @@ public final class TransformEngine {
 
     // ── Verb Call Execution ──
 
-    private static DynValue executeVerbCall(VerbCall call, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
-        // Short-circuit: ifElse
-        if (call.getVerb().equals("ifElse") && call.getArgs().size() >= 3) {
-            var condition = evaluateVerbArg(call.getArgs().get(0), ctx, currentSource, currentOutput);
-            return isTruthy(condition)
-                    ? evaluateVerbArg(call.getArgs().get(1), ctx, currentSource, currentOutput)
-                    : evaluateVerbArg(call.getArgs().get(2), ctx, currentSource, currentOutput);
-        }
+    // Control-flow verbs whose branches evaluate lazily: the condition runs first
+    // and only the selected branch runs, so unselected branches do not fire side
+    // effects and and/or/coalesce short-circuit.
+    private static final java.util.Set<String> LAZY_VERBS = java.util.Set.of(
+            "ifElse", "ifNull", "ifEmpty", "coalesce", "and", "or", "cond", "switch");
 
-        // Short-circuit: cond
-        if (call.getVerb().equals("cond") && !call.getArgs().isEmpty()) {
-            var args = call.getArgs();
-            for (int i = 0; i + 1 < args.size(); i += 2) {
-                var condition = evaluateVerbArg(args.get(i), ctx, currentSource, currentOutput);
-                if (isTruthy(condition)) {
-                    return evaluateVerbArg(args.get(i + 1), ctx, currentSource, currentOutput);
-                }
-            }
-            if (args.size() % 2 == 1) {
-                return evaluateVerbArg(args.get(args.size() - 1), ctx, currentSource, currentOutput);
-            }
-            return DynValue.ofNull();
+    private static DynValue executeVerbCall(VerbCall call, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
+        // Strict mode validates all argument types, so it evaluates eagerly.
+        if (!call.isCustom() && !ctx.strictTypes && LAZY_VERBS.contains(call.getVerb())) {
+            var lazy = evaluateLazyVerb(call, ctx, currentSource, currentOutput);
+            if (lazy != null) return lazy;
         }
 
         // Evaluate all arguments
@@ -1618,6 +1610,66 @@ public final class TransformEngine {
         }
 
         return result;
+    }
+
+    // Evaluate a control-flow verb lazily, running only the arguments needed to
+    // decide the result. Returns null to defer to eager evaluation (too few args).
+    private static DynValue evaluateLazyVerb(VerbCall call, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
+        var args = call.getArgs();
+        java.util.function.IntFunction<DynValue> ev = i -> evaluateVerbArg(args.get(i), ctx, currentSource, currentOutput);
+        switch (call.getVerb()) {
+            case "ifElse":
+                if (args.size() < 3) return null;
+                return isTruthy(ev.apply(0)) ? ev.apply(1) : ev.apply(2);
+            case "ifNull": {
+                if (args.size() < 2) return null;
+                var v0 = ev.apply(0);
+                return v0.isNull() ? ev.apply(1) : v0;
+            }
+            case "ifEmpty": {
+                if (args.size() < 2) return null;
+                var v0 = ev.apply(0);
+                boolean empty = v0.isNull()
+                        || (v0.getType() == DynValue.Type.String && "".equals(v0.asString()));
+                return empty ? ev.apply(1) : v0;
+            }
+            case "coalesce": {
+                for (int i = 0; i < args.size(); i++) {
+                    var v = ev.apply(i);
+                    boolean skip = v.isNull()
+                            || (v.getType() == DynValue.Type.String && "".equals(v.asString()));
+                    if (!skip) return v;
+                }
+                return DynValue.ofNull();
+            }
+            case "and":
+                if (args.size() < 2) return null;
+                if (!isTruthy(ev.apply(0))) return DynValue.ofBool(false);
+                return DynValue.ofBool(isTruthy(ev.apply(1)));
+            case "or":
+                if (args.size() < 2) return null;
+                if (isTruthy(ev.apply(0))) return DynValue.ofBool(true);
+                return DynValue.ofBool(isTruthy(ev.apply(1)));
+            case "cond": {
+                if (args.isEmpty()) return null;
+                int i = 0;
+                while (i + 1 < args.size()) {
+                    if (isTruthy(ev.apply(i))) return ev.apply(i + 1);
+                    i += 2;
+                }
+                return args.size() % 2 == 1 ? ev.apply(args.size() - 1) : DynValue.ofNull();
+            }
+            case "switch": {
+                if (args.size() < 2) return null;
+                var subject = ev.apply(0);
+                for (int i = 1; i + 1 < args.size(); i += 2) {
+                    if (VerbHelpers.dynValuesEqual(subject, ev.apply(i))) return ev.apply(i + 1);
+                }
+                return (args.size() - 1) % 2 == 1 ? ev.apply(args.size() - 1) : DynValue.ofNull();
+            }
+            default:
+                return null;
+        }
     }
 
     private static DynValue evaluateVerbArg(VerbArg arg, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {

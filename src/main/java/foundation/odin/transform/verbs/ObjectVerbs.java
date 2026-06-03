@@ -17,6 +17,13 @@ public final class ObjectVerbs {
         reg.put("has", ObjectVerbs::has);
         reg.put("get", ObjectVerbs::get);
         reg.put("merge", ObjectVerbs::merge);
+        reg.put("pick", ObjectVerbs::pick);
+        reg.put("omit", ObjectVerbs::omit);
+        reg.put("fromEntries", ObjectVerbs::fromEntries);
+        reg.put("invert", ObjectVerbs::invert);
+        reg.put("defaults", ObjectVerbs::defaults);
+        reg.put("renameKeys", ObjectVerbs::renameKeys);
+        reg.put("compactObject", ObjectVerbs::compactObject);
     }
 
     // ── Helpers ──
@@ -25,6 +32,38 @@ public final class ObjectVerbs {
         var obj = v.asObject();
         if (obj != null) return obj;
         return v.extractObject();
+    }
+
+    private static boolean isSafeKey(String key) {
+        String k = key.toLowerCase();
+        return !k.equals("__proto__") && !k.equals("constructor") && !k.equals("prototype");
+    }
+
+    private static String coerceKey(DynValue v) {
+        var s = v.asString();
+        if (s != null) return s;
+        var i = v.asInt64();
+        if (i != null) return Long.toString(i);
+        var d = v.asDouble();
+        if (d != null) {
+            if (d == Math.floor(d) && !Double.isInfinite(d)) return Long.toString((long) (double) d);
+            return Double.toString(d);
+        }
+        var b = v.asBool();
+        if (b != null) return b ? "true" : "false";
+        if (v.isNull()) return "";
+        return "";
+    }
+
+    private static boolean isEmptyValue(DynValue v) {
+        if (v.isNull()) return true;
+        var s = v.asString();
+        if (s != null && v.getType() == DynValue.Type.String) return s.isEmpty();
+        var arr = v.asArray();
+        if (arr != null) return arr.isEmpty();
+        var obj = v.asObject();
+        if (obj != null) return obj.isEmpty();
+        return false;
     }
 
     // ── Verb Implementations ──
@@ -102,5 +141,121 @@ public final class ObjectVerbs {
             entries.add(Map.entry(e.getKey(), e.getValue()));
         }
         return DynValue.ofObject(entries);
+    }
+
+    // Keep only the named keys, in argument order, skipping absent or unsafe ones.
+    private static DynValue pick(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        var obj = extractObj(args[0]);
+        if (obj == null) return DynValue.ofNull();
+        var lookup = new LinkedHashMap<String, DynValue>();
+        for (var e : obj) lookup.put(e.getKey(), e.getValue());
+        var result = new ArrayList<Map.Entry<String, DynValue>>();
+        for (int i = 1; i < args.length; i++) {
+            String key = coerceKey(args[i]);
+            if (isSafeKey(key) && lookup.containsKey(key)) {
+                result.add(Map.entry(key, lookup.get(key)));
+            }
+        }
+        return DynValue.ofObject(result);
+    }
+
+    // Drop the named keys, preserving source order.
+    private static DynValue omit(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        var obj = extractObj(args[0]);
+        if (obj == null) return DynValue.ofNull();
+        var drop = new HashSet<String>();
+        for (int i = 1; i < args.length; i++) drop.add(coerceKey(args[i]));
+        var result = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : obj) {
+            if (!isSafeKey(e.getKey())) continue;
+            if (!drop.contains(e.getKey())) result.add(e);
+        }
+        return DynValue.ofObject(result);
+    }
+
+    // Build an object from an array of [key, value] pairs (pair order, last wins).
+    private static DynValue fromEntries(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        var pairs = args[0].asArray();
+        if (pairs == null) pairs = args[0].extractArray();
+        if (pairs == null) return DynValue.ofNull();
+        var result = new LinkedHashMap<String, DynValue>();
+        for (var entry : pairs) {
+            var pair = entry.asArray();
+            if (pair == null || pair.size() < 2) continue;
+            String key = coerceKey(pair.get(0));
+            if (isSafeKey(key)) result.put(key, pair.get(1));
+        }
+        var out = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : result.entrySet()) out.add(Map.entry(e.getKey(), e.getValue()));
+        return DynValue.ofObject(out);
+    }
+
+    // Swap keys and values; values become string keys (last wins on duplicates).
+    private static DynValue invert(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        var obj = extractObj(args[0]);
+        if (obj == null) return DynValue.ofNull();
+        var result = new LinkedHashMap<String, DynValue>();
+        for (var e : obj) {
+            if (!isSafeKey(e.getKey())) continue;
+            String newKey = coerceKey(e.getValue());
+            if (isSafeKey(newKey)) result.put(newKey, DynValue.ofString(e.getKey()));
+        }
+        var out = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : result.entrySet()) out.add(Map.entry(e.getKey(), e.getValue()));
+        return DynValue.ofObject(out);
+    }
+
+    // Fill keys missing from the object using defaults (object value wins).
+    private static DynValue defaults(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        var src = extractObj(args[0]);
+        var def = extractObj(args[1]);
+        if (src == null) return def != null ? args[1] : DynValue.ofNull();
+        if (def == null) return args[0];
+        var result = new LinkedHashMap<String, DynValue>();
+        for (var e : src) if (isSafeKey(e.getKey())) result.put(e.getKey(), e.getValue());
+        for (var e : def) {
+            if (!isSafeKey(e.getKey())) continue;
+            if (!result.containsKey(e.getKey())) result.put(e.getKey(), e.getValue());
+        }
+        var out = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : result.entrySet()) out.add(Map.entry(e.getKey(), e.getValue()));
+        return DynValue.ofObject(out);
+    }
+
+    // Rename keys named in the mapping (old -> new), keeping position.
+    private static DynValue renameKeys(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        var src = extractObj(args[0]);
+        if (src == null) return DynValue.ofNull();
+        var map = extractObj(args[1]);
+        if (map == null) return args[0];
+        var rename = new LinkedHashMap<String, DynValue>();
+        for (var e : map) rename.put(e.getKey(), e.getValue());
+        var result = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : src) {
+            if (!isSafeKey(e.getKey())) continue;
+            String newKey = rename.containsKey(e.getKey()) ? coerceKey(rename.get(e.getKey())) : e.getKey();
+            if (isSafeKey(newKey)) result.add(Map.entry(newKey, e.getValue()));
+        }
+        return DynValue.ofObject(result);
+    }
+
+    // Drop entries whose value is null, empty string, empty array, or empty object.
+    private static DynValue compactObject(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        var obj = extractObj(args[0]);
+        if (obj == null) return DynValue.ofNull();
+        var result = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : obj) {
+            if (!isSafeKey(e.getKey())) continue;
+            if (isEmptyValue(e.getValue())) continue;
+            result.add(e);
+        }
+        return DynValue.ofObject(result);
     }
 }

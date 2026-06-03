@@ -49,6 +49,87 @@ public final class FinancialVerbs {
         reg.put("irr", FinancialVerbs::irr);
         reg.put("depreciation", FinancialVerbs::depreciation);
         reg.put("movingAvg", FinancialVerbs::movingAvg);
+        reg.put("xnpv", FinancialVerbs::xnpv);
+        reg.put("xirr", FinancialVerbs::xirr);
+    }
+
+    // Convert a value to a fractional day count (epoch days) for dated cash flows.
+    private static List<Double> extractDays(DynValue arg) {
+        var items = arg.asArray();
+        if (items == null) items = arg.extractArray();
+        if (items == null) return null;
+        var result = new ArrayList<Double>(items.size());
+        for (DynValue item : items) {
+            Double day = toDays(item);
+            if (day == null) return null;
+            result.add(day);
+        }
+        return result;
+    }
+
+    private static Double toDays(DynValue item) {
+        switch (item.getType()) {
+            case Integer: return (double) (long) item.asInt64();
+            case Float, Currency, Percent: return item.asDouble();
+            case Date, Timestamp, String: {
+                String s = item.asString();
+                if (s == null) return null;
+                try {
+                    String datePart = s.length() >= 10 ? s.substring(0, 10) : s;
+                    return (double) java.time.LocalDate.parse(datePart).toEpochDay();
+                } catch (Exception e) { return null; }
+            }
+            default: return null;
+        }
+    }
+
+    private static double xnpvAt(double rate, List<Double> amounts, List<Double> days) {
+        double d0 = days.get(0);
+        double total = 0;
+        for (int i = 0; i < amounts.size(); i++) {
+            total += amounts.get(i) / Math.pow(1 + rate, (days.get(i) - d0) / 365.0);
+        }
+        return total;
+    }
+
+    // Net present value of cash flows on specific dates.
+    private static DynValue xnpv(DynValue[] args, VerbContext ctx) {
+        if (args.length < 3) return DynValue.ofNull();
+        Double rate = toDouble(args[0]);
+        var amounts = extractDoubles(args[1]);
+        var days = extractDays(args[2]);
+        if (rate == null || amounts == null || days == null) return DynValue.ofNull();
+        if (amounts.isEmpty() || amounts.size() != days.size()) return DynValue.ofNull();
+        double result = xnpvAt(rate, amounts, days);
+        if (!Double.isFinite(result)) return DynValue.ofNull();
+        return numericResult(result);
+    }
+
+    // Internal rate of return for cash flows on specific dates (Newton's method).
+    private static DynValue xirr(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        var amounts = extractDoubles(args[0]);
+        var days = extractDays(args[1]);
+        if (amounts == null || days == null) return DynValue.ofNull();
+        if (amounts.size() < 2 || amounts.size() != days.size()) return DynValue.ofNull();
+
+        double rate = args.length >= 3 && toDouble(args[2]) != null ? toDouble(args[2]) : 0.1;
+        double d0 = days.get(0);
+        for (int iter = 0; iter < 100; iter++) {
+            double value = 0, derivative = 0;
+            for (int j = 0; j < amounts.size(); j++) {
+                double exp = (days.get(j) - d0) / 365.0;
+                double factor = Math.pow(1 + rate, exp);
+                value += amounts.get(j) / factor;
+                derivative -= exp * amounts.get(j) / Math.pow(1 + rate, exp + 1);
+            }
+            if (Math.abs(value) < 1e-7) return numericResult(rate);
+            if (Math.abs(derivative) < 1e-12) return DynValue.ofNull();
+            double next = rate - value / derivative;
+            if (!Double.isFinite(next) || next <= -1) return DynValue.ofNull();
+            rate = next;
+        }
+        return DynValue.ofNull();
     }
 
     // ── Helpers ──

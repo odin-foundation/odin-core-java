@@ -820,9 +820,9 @@ class CoreVerbExtendedTest {
     @Nested class AssertVerbTests {
 
         @Test void assert_TruthyInt() { assertEquals(1L, invoke("assert", I(1)).asInt64()); }
-        @Test void assert_FalsyZero_Throws() { assertThrows(RuntimeException.class, () -> invoke("assert", I(0))); }
+        @Test void assert_FalsyZero_Null() { assertTrue(invoke("assert", I(0)).isNull()); }
         @Test void assert_TruthyString() { assertEquals("yes", invoke("assert", S("yes")).asString()); }
-        @Test void assert_FalsyNull_Throws() { assertThrows(RuntimeException.class, () -> invoke("assert", Null())); }
+        @Test void assert_FalsyNull_Null() { assertTrue(invoke("assert", Null()).isNull()); }
     }
 
     // =========================================================================

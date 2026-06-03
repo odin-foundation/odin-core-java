@@ -54,6 +54,17 @@ public final class CollectionVerbs {
         reg.put("reduce", CollectionVerbs::reduce);
         reg.put("pivot", CollectionVerbs::pivot);
         reg.put("unpivot", CollectionVerbs::unpivot);
+        reg.put("intersection", CollectionVerbs::intersection);
+        reg.put("union", CollectionVerbs::union);
+        reg.put("difference", CollectionVerbs::difference);
+        reg.put("symmetricDifference", CollectionVerbs::symmetricDifference);
+        reg.put("countBy", CollectionVerbs::countBy);
+        reg.put("keyBy", CollectionVerbs::keyBy);
+        reg.put("explode", CollectionVerbs::explode);
+        reg.put("window", CollectionVerbs::window);
+        reg.put("countIf", CollectionVerbs::countIf);
+        reg.put("sumIf", CollectionVerbs::sumIf);
+        reg.put("avgIf", CollectionVerbs::avgIf);
     }
 
     // ── Helpers ──
@@ -975,5 +986,262 @@ public final class CollectionVerbs {
         }
 
         return DynValue.ofArray(result);
+    }
+
+    // ── Set, grouping, and predicate-aggregation verbs ──
+
+    // Canonical equality key: numbers collapse by value, others by JSON form.
+    private static String valueKey(DynValue v) {
+        Double d = numericValue(v);
+        if (d != null) {
+            if (d == Math.floor(d) && !Double.isInfinite(d)) return "#" + (long) (double) d;
+            return "#" + d;
+        }
+        return v.toJsonElement().toString();
+    }
+
+    private static Double numericValue(DynValue v) {
+        switch (v.getType()) {
+            case Integer: { Long l = v.asInt64(); return l != null ? (double) l : null; }
+            case Float, Currency, Percent: return v.asDouble();
+            default: return null;
+        }
+    }
+
+    private static String coerceKey(DynValue v) {
+        var s = v.asString();
+        if (s != null) return s;
+        var i = v.asInt64();
+        if (i != null) return Long.toString(i);
+        var d = v.asDouble();
+        if (d != null) {
+            if (d == Math.floor(d) && !Double.isInfinite(d)) return Long.toString((long) (double) d);
+            return Double.toString(d);
+        }
+        var b = v.asBool();
+        if (b != null) return b ? "true" : "false";
+        return "";
+    }
+
+    private static boolean isSafeKey(String key) {
+        String k = key.toLowerCase();
+        return !k.equals("__proto__") && !k.equals("constructor") && !k.equals("prototype");
+    }
+
+    private static DynValue intersection(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofArray(new ArrayList<>());
+        var a = extractArray(args[0]);
+        var b = extractArray(args[1]);
+        var bKeys = new HashSet<String>();
+        for (var item : b) bKeys.add(valueKey(item));
+        var seen = new HashSet<String>();
+        var result = new ArrayList<DynValue>();
+        for (var item : a) {
+            String k = valueKey(item);
+            if (bKeys.contains(k) && seen.add(k)) result.add(item);
+        }
+        return DynValue.ofArray(result);
+    }
+
+    private static DynValue union(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofArray(new ArrayList<>());
+        var seen = new HashSet<String>();
+        var result = new ArrayList<DynValue>();
+        for (var item : extractArray(args[0])) if (seen.add(valueKey(item))) result.add(item);
+        for (var item : extractArray(args[1])) if (seen.add(valueKey(item))) result.add(item);
+        return DynValue.ofArray(result);
+    }
+
+    private static DynValue difference(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofArray(new ArrayList<>());
+        var a = extractArray(args[0]);
+        var bKeys = new HashSet<String>();
+        for (var item : extractArray(args[1])) bKeys.add(valueKey(item));
+        var seen = new HashSet<String>();
+        var result = new ArrayList<DynValue>();
+        for (var item : a) {
+            String k = valueKey(item);
+            if (!bKeys.contains(k) && seen.add(k)) result.add(item);
+        }
+        return DynValue.ofArray(result);
+    }
+
+    private static DynValue symmetricDifference(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofArray(new ArrayList<>());
+        var a = extractArray(args[0]);
+        var b = extractArray(args[1]);
+        var aKeys = new HashSet<String>();
+        for (var item : a) aKeys.add(valueKey(item));
+        var bKeys = new HashSet<String>();
+        for (var item : b) bKeys.add(valueKey(item));
+        var seen = new HashSet<String>();
+        var result = new ArrayList<DynValue>();
+        for (var item : a) {
+            String k = valueKey(item);
+            if (!bKeys.contains(k) && seen.add(k)) result.add(item);
+        }
+        for (var item : b) {
+            String k = valueKey(item);
+            if (!aKeys.contains(k) && seen.add(k)) result.add(item);
+        }
+        return DynValue.ofArray(result);
+    }
+
+    private static DynValue countBy(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofNull();
+        String field = args.length > 1 ? coerceKey(args[1]) : null;
+        var counts = new HashMap<String, Integer>();
+        for (var item : arr) {
+            DynValue v = field != null ? getField(item, field) : item;
+            String key = coerceKey(v);
+            counts.merge(key, 1, Integer::sum);
+        }
+        var keys = new ArrayList<>(counts.keySet());
+        Collections.sort(keys);
+        var result = new ArrayList<Map.Entry<String, DynValue>>();
+        for (String key : keys) {
+            if (isSafeKey(key)) result.add(Map.entry(key, DynValue.ofInteger(counts.get(key))));
+        }
+        return DynValue.ofObject(result);
+    }
+
+    private static DynValue keyBy(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofNull();
+        String field = coerceKey(args[1]);
+        var result = new LinkedHashMap<String, DynValue>();
+        for (var item : arr) {
+            String key = coerceKey(getField(item, field));
+            if (isSafeKey(key)) result.put(key, item);
+        }
+        var out = new ArrayList<Map.Entry<String, DynValue>>();
+        for (var e : result.entrySet()) out.add(Map.entry(e.getKey(), e.getValue()));
+        return DynValue.ofObject(out);
+    }
+
+    private static DynValue explode(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofArray(new ArrayList<>());
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofArray(new ArrayList<>());
+        String field = coerceKey(args[1]);
+        var result = new ArrayList<DynValue>();
+        for (var item : arr) {
+            var base = item.asObject();
+            if (base == null) base = item.extractObject();
+            if (base == null) { result.add(item); continue; }
+            DynValue fieldVal = getField(item, field);
+            var elements = fieldVal.asArray();
+            if (elements == null) elements = fieldVal.isNull() ? null : fieldVal.extractArray();
+            if (elements == null || elements.isEmpty()) {
+                result.add(DynValue.ofObject(new ArrayList<>(base)));
+                continue;
+            }
+            for (var el : elements) {
+                var row = new ArrayList<Map.Entry<String, DynValue>>();
+                boolean replaced = false;
+                for (var e : base) {
+                    if (e.getKey().equals(field)) { row.add(Map.entry(field, el)); replaced = true; }
+                    else row.add(e);
+                }
+                if (!replaced) row.add(Map.entry(field, el));
+                result.add(DynValue.ofObject(row));
+            }
+        }
+        return DynValue.ofArray(result);
+    }
+
+    private static DynValue window(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofArray(new ArrayList<>());
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofArray(new ArrayList<>());
+        Integer n = toInt(args[1]);
+        if (n == null || n <= 0 || arr.size() < n) return DynValue.ofArray(new ArrayList<>());
+        var result = new ArrayList<DynValue>();
+        for (int i = 0; i + n <= arr.size(); i++) {
+            result.add(DynValue.ofArray(new ArrayList<>(arr.subList(i, i + n))));
+        }
+        return DynValue.ofArray(result);
+    }
+
+    // Apply a filter operator to an item field value and a comparison value.
+    private static boolean matchesOp(DynValue itemVal, String op, DynValue cmp) {
+        String fieldStr = coerceStr(itemVal);
+        String cmpStr = coerceStr(cmp);
+        return switch (op) {
+            case "=", "==" -> fieldStr.equals(cmpStr);
+            case "!=", "<>" -> !fieldStr.equals(cmpStr);
+            case "<" -> { Double a = toDouble(itemVal), b = toDouble(cmp); yield a != null && b != null && a < b; }
+            case "<=" -> { Double a = toDouble(itemVal), b = toDouble(cmp); yield a != null && b != null && a <= b; }
+            case ">" -> { Double a = toDouble(itemVal), b = toDouble(cmp); yield a != null && b != null && a > b; }
+            case ">=" -> { Double a = toDouble(itemVal), b = toDouble(cmp); yield a != null && b != null && a >= b; }
+            case "contains" -> fieldStr.contains(cmpStr);
+            case "startsWith" -> fieldStr.startsWith(cmpStr);
+            case "endsWith" -> fieldStr.endsWith(cmpStr);
+            default -> false;
+        };
+    }
+
+    private static String coerceStr(DynValue v) {
+        var s = v.asString();
+        if (s != null) return s;
+        return coerceKey(v);
+    }
+
+    private static DynValue countIf(DynValue[] args, VerbContext ctx) {
+        if (args.length < 4) return DynValue.ofInteger(0);
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofInteger(0);
+        String field = coerceKey(args[1]);
+        String op = coerceKey(args[2]);
+        int count = 0;
+        for (var item : arr) if (matchesOp(getField(item, field), op, args[3])) count++;
+        return DynValue.ofInteger(count);
+    }
+
+    private static DynValue sumIf(DynValue[] args, VerbContext ctx) {
+        if (args.length < 4) return DynValue.ofInteger(0);
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofInteger(0);
+        String field = coerceKey(args[1]);
+        String op = coerceKey(args[2]);
+        String sumField = args.length >= 5 ? coerceKey(args[4]) : field;
+        double total = 0;
+        for (var item : arr) {
+            if (matchesOp(getField(item, field), op, args[3])) {
+                Double v = toDouble(getField(item, sumField));
+                if (v != null) total += v;
+            }
+        }
+        return numericResult(total);
+    }
+
+    private static DynValue avgIf(DynValue[] args, VerbContext ctx) {
+        if (args.length < 4) return DynValue.ofNull();
+        var arr = args[0].asArray();
+        if (arr == null) arr = args[0].extractArray();
+        if (arr == null) return DynValue.ofNull();
+        String field = coerceKey(args[1]);
+        String op = coerceKey(args[2]);
+        String avgField = args.length >= 5 ? coerceKey(args[4]) : field;
+        double total = 0;
+        int count = 0;
+        for (var item : arr) {
+            if (matchesOp(getField(item, field), op, args[3])) {
+                Double v = toDouble(getField(item, avgField));
+                if (v != null) total += v;
+                count++;
+            }
+        }
+        if (count == 0) return DynValue.ofNull();
+        return numericResult(total / count);
     }
 }

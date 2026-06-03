@@ -670,6 +670,11 @@ public final class TransformParser {
                  "camelCase", "snakeCase", "kebabCase", "pascalCase",
                  "slugify", "normalizeSpace", "stripAccents", "clean",
                  "wordCount", "soundex",
+                 "escapeHtml", "unescapeHtml", "escapeXml", "stripTags",
+                 "factorial", "fromEntries", "invert", "compactObject",
+                 "base64urlEncode", "base64urlDecode",
+                 "stableStringify", "canonicalHash",
+                 "parseUrl", "buildUrl", "parseQuery", "buildQuery",
                  "abs", "floor", "ceil", "negate", "sign", "trunc",
                  "isFinite", "isNaN", "ln", "log10", "exp", "sqrt",
                  "formatInteger", "formatCurrency",
@@ -710,6 +715,9 @@ public final class TransformParser {
                  "dedupe", "diff", "pctChange", "limit",
                  "nanoid",
                  "has", "merge", "jsonPath",
+                 "intersection", "union", "difference", "symmetricDifference",
+                 "countBy", "keyBy", "explode", "window",
+                 "gcd", "lcm", "defaults", "renameKeys", "template",
                  "assert" -> 2;
             case "ifElse", "between",
                  "substring", "replace", "replaceRegex", "padLeft", "padRight",
@@ -719,12 +727,13 @@ public final class TransformParser {
                  "reduce", "pivot", "unpivot", "convertUnit",
                  "compound", "discount", "pmt", "fv", "pv", "depreciation",
                  "slice", "range", "shift", "rank", "lag", "lead",
-                 "sample", "fillMissing",
+                 "sample", "fillMissing", "hmac", "xnpv", "xirr",
                  "get" -> 3;
             case "rate", "nper",
                  "filter", "every", "some", "find", "findIndex", "partition",
+                 "countIf",
                  "bearing", "midpoint" -> 4;
-            case "distance", "interpolate" -> 5;
+            case "distance", "interpolate", "sumIf", "avgIf" -> 5;
             case "inBoundingBox" -> 6;
             default -> -1; // variadic
         };
@@ -855,11 +864,34 @@ public final class TransformParser {
         var argsStr = verbEnd < raw.length() ? raw.substring(verbEnd) : "";
         var result = parseExpressionArgs(argsStr, arity);
 
+        // %expr is a parse-time macro: compile the formula into a verb tree.
+        if (verb.equals("expr") && !isCustom) {
+            return new ParsedVerbExpr(compileExprArgs(result.args), verbEnd + result.consumed);
+        }
+
         var verbCall = new VerbCall();
         verbCall.setVerb(verb);
         verbCall.setIsCustom(isCustom);
         verbCall.setArgs(result.args);
         return new ParsedVerbExpr(FieldExpression.transform(verbCall), verbEnd + result.consumed);
+    }
+
+    // Compile parsed %expr args (formula literal + optional bindings reference)
+    // into a field-expression tree.
+    private static FieldExpression compileExprArgs(List<VerbArg> args) {
+        if (args.isEmpty() || !(args.get(0) instanceof VerbArg.LiteralArg lit)
+                || !(lit.getValue() instanceof OdinString formula)) {
+            throw new Expr.ExprSyntaxException("expected a quoted formula string");
+        }
+        String bindingPath = null;
+        if (args.size() >= 2) {
+            if (args.get(1) instanceof VerbArg.ReferenceArg ref) {
+                bindingPath = ref.getPath();
+            } else {
+                throw new Expr.ExprSyntaxException("the bindings argument must be a reference such as @.vars");
+            }
+        }
+        return Expr.compile(formula.getValue(), bindingPath);
     }
 
     private record ParsedVerbArg(VerbArg arg, int consumed) {}
@@ -967,6 +999,16 @@ public final class TransformParser {
             } else if (argsStr.charAt(pos) == '~') {
                 args.add(VerbArg.lit(OdinValue.ofNull()));
                 pos += 1;
+            } else if (argsStr.charAt(pos) == '?') {
+                // ODIN boolean prefix: ?true / ?false.
+                int tokEnd = findTokenEnd(argsStr, pos + 1);
+                var tok = argsStr.substring(pos + 1, tokEnd);
+                if (tok.equals("true") || tok.equals("false")) {
+                    args.add(VerbArg.lit(OdinValue.ofBoolean(tok.equals("true"))));
+                } else {
+                    args.add(VerbArg.lit(OdinValue.ofString(argsStr.substring(pos, tokEnd))));
+                }
+                pos = tokEnd;
             } else if (pos + 4 <= argsStr.length() && argsStr.substring(pos, pos + 4).equals("true")
                        && (pos + 4 >= argsStr.length() || Character.isWhitespace(argsStr.charAt(pos + 4)))) {
                 args.add(VerbArg.lit(OdinValue.ofBoolean(true)));
@@ -1120,6 +1162,10 @@ public final class TransformParser {
                 if (verbVal.getArgs().isEmpty() && verbVal.getName().startsWith("%")) {
                     yield parseStringExpressionWithDirectives(verbVal.getName());
                 }
+                // %expr is a parse-time macro: compile the formula into a verb tree.
+                if (verbVal.getName().equals("expr") && !verbVal.isCustom()) {
+                    yield new ExprWithDirs(compileExprVerb(verbVal), new ArrayList<>());
+                }
                 var verbCall = new VerbCall();
                 verbCall.setVerb(verbVal.getName());
                 verbCall.setIsCustom(verbVal.isCustom());
@@ -1193,6 +1239,24 @@ public final class TransformParser {
                 collectFromVerbArgs(vcArg.getNestedCall().getArgs(), collected);
             }
         }
+    }
+
+    // Compile a %expr verb (formula string + optional bindings reference) into a
+    // field expression tree of arithmetic verbs.
+    private static FieldExpression compileExprVerb(OdinValue verbVal) {
+        var args = ((OdinVerb) verbVal).getArgs();
+        if (args.isEmpty() || !(args.get(0) instanceof OdinString formula)) {
+            throw new Expr.ExprSyntaxException("expected a quoted formula string");
+        }
+        String bindingPath = null;
+        if (args.size() >= 2) {
+            if (args.get(1) instanceof OdinReference ref) {
+                bindingPath = ref.getPath();
+            } else {
+                throw new Expr.ExprSyntaxException("the bindings argument must be a reference such as @.vars");
+            }
+        }
+        return Expr.compile(formula.getValue(), bindingPath);
     }
 
     private static VerbArg odinValueToVerbArg(OdinValue value) {

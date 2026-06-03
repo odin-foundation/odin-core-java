@@ -212,6 +212,9 @@ public final class OdinFormatter {
         for (var entry : entries) {
             var child = entry.getValue();
             if (child.getType() == DynValue.Type.Object && !isPureLeafChain(child)) {
+                // An empty nested object contributes no fields and is not emitted.
+                var childObj = child.asObject();
+                if (childObj != null && childObj.isEmpty()) continue;
                 String childFullPath = fullPath + "." + entry.getKey();
                 String childDisplay;
                 if (!isRelative && !insideRelative && lastCtx[0].equals(fullPath))

@@ -309,16 +309,16 @@ class LogicVerbTest {
     }
 
     @Test void assert_Falsy() {
-        assertThrows(Exception.class, () -> invoke("assert", B(false)));
+        assertTrue(invoke("assert", B(false)).isNull());
     }
 
     @Test void assert_FalsyWithMessage() {
-        var ex = assertThrows(Exception.class, () -> invoke("assert", B(false), S("custom message")));
-        assertTrue(ex.getMessage().contains("custom message"));
+        // The message argument is diagnostic only; a failing assertion yields null.
+        assertTrue(invoke("assert", B(false), S("custom message")).isNull());
     }
 
     @Test void assert_NoArgs() {
-        assertThrows(Exception.class, () -> invoke("assert"));
+        assertTrue(invoke("assert").isNull());
     }
 
     @Test void assert_TruthyString() {
@@ -327,11 +327,11 @@ class LogicVerbTest {
     }
 
     @Test void assert_FalsyNull() {
-        assertThrows(Exception.class, () -> invoke("assert", Null()));
+        assertTrue(invoke("assert", Null()).isNull());
     }
 
     @Test void assert_FalsyEmptyString() {
-        assertThrows(Exception.class, () -> invoke("assert", S("")));
+        assertTrue(invoke("assert", S("")).isNull());
     }
 
     // =========================================================================

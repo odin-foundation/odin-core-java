@@ -110,6 +110,18 @@ public final class ValueParser {
                     if (t.getTokenType() == TokenType.Newline || t.getTokenType() == TokenType.Comment)
                         break;
 
+                    // A ?true / ?false boolean spans the prefix token plus the
+                    // following keyword; join them so the value stays one token.
+                    if (t.getTokenType() == TokenType.BooleanPrefix
+                            && i + 1 < tokens.size()
+                            && ("true".equals(tokens.get(i + 1).getValue())
+                                || "false".equals(tokens.get(i + 1).getValue()))) {
+                        parts.add("?" + tokens.get(i + 1).getValue());
+                        consumed += 2;
+                        i += 2;
+                        continue;
+                    }
+
                     String text = switch (t.getTokenType()) {
                         case ReferencePrefix -> "@" + t.getValue();
                         case IntegerPrefix -> "##" + t.getValue();

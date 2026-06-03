@@ -6,6 +6,7 @@ import foundation.odin.transform.TransformEngine.VerbContext;
 import java.text.Normalizer;
 import java.util.*;
 import java.util.function.BiFunction;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class StringVerbs {
@@ -145,6 +146,106 @@ public final class StringVerbs {
         reg.put("levenshtein", StringVerbs::levenshtein);
         reg.put("soundex", StringVerbs::soundex);
         reg.put("formatPhone", StringVerbs::formatPhone);
+        reg.put("escapeHtml", StringVerbs::escapeHtml);
+        reg.put("unescapeHtml", StringVerbs::unescapeHtml);
+        reg.put("escapeXml", StringVerbs::escapeXml);
+        reg.put("stripTags", StringVerbs::stripTags);
+        reg.put("template", StringVerbs::template);
+    }
+
+    // ── Markup escaping / templating ──
+
+    private static String escapeMarkup(String s, boolean xmlApos) {
+        var sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '&' -> sb.append("&amp;");
+                case '<' -> sb.append("&lt;");
+                case '>' -> sb.append("&gt;");
+                case '"' -> sb.append("&quot;");
+                case '\'' -> sb.append(xmlApos ? "&apos;" : "&#39;");
+                default -> sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static DynValue escapeHtml(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        return DynValue.ofString(escapeMarkup(toStr(args[0]), false));
+    }
+
+    private static DynValue escapeXml(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        return DynValue.ofString(escapeMarkup(toStr(args[0]), true));
+    }
+
+    private static final Pattern NAMED_ENTITY = Pattern.compile("&(amp|lt|gt|quot|apos|#39);");
+    private static final Pattern DEC_ENTITY = Pattern.compile("&#(\\d+);");
+    private static final Pattern HEX_ENTITY = Pattern.compile("&#x([0-9a-fA-F]+);");
+
+    private static DynValue unescapeHtml(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        String s = toStr(args[0]);
+        var named = NAMED_ENTITY.matcher(s);
+        var nsb = new StringBuilder();
+        while (named.find()) {
+            String rep = switch (named.group(1)) {
+                case "amp" -> "&";
+                case "lt" -> "<";
+                case "gt" -> ">";
+                case "quot" -> "\"";
+                default -> "'"; // apos or #39
+            };
+            named.appendReplacement(nsb, Matcher.quoteReplacement(rep));
+        }
+        named.appendTail(nsb);
+        s = nsb.toString();
+
+        var dec = DEC_ENTITY.matcher(s);
+        var dsb = new StringBuilder();
+        while (dec.find()) {
+            dec.appendReplacement(dsb, Matcher.quoteReplacement(new String(Character.toChars(Integer.parseInt(dec.group(1))))));
+        }
+        dec.appendTail(dsb);
+        s = dsb.toString();
+
+        var hex = HEX_ENTITY.matcher(s);
+        var hsb = new StringBuilder();
+        while (hex.find()) {
+            hex.appendReplacement(hsb, Matcher.quoteReplacement(new String(Character.toChars(Integer.parseInt(hex.group(1), 16)))));
+        }
+        hex.appendTail(hsb);
+        return DynValue.ofString(hsb.toString());
+    }
+
+    private static final Pattern TAG = Pattern.compile("<[^>]*>");
+
+    private static DynValue stripTags(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        return DynValue.ofString(TAG.matcher(toStr(args[0])).replaceAll(""));
+    }
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{([^{}]+)\\}");
+
+    private static DynValue template(DynValue[] args, VerbContext ctx) {
+        if (args.length < 2) return DynValue.ofNull();
+        String tpl = toStr(args[0]);
+        var fields = new HashMap<String, DynValue>();
+        var obj = args[1].asObject();
+        if (obj == null) obj = args[1].extractObject();
+        if (obj != null) for (var e : obj) fields.put(e.getKey(), e.getValue());
+        var m = PLACEHOLDER.matcher(tpl);
+        var sb = new StringBuilder();
+        while (m.find()) {
+            String k = m.group(1).trim();
+            DynValue v = fields.get(k);
+            String rep = (v == null || v.isNull()) ? "" : toStr(v);
+            m.appendReplacement(sb, Matcher.quoteReplacement(rep));
+        }
+        m.appendTail(sb);
+        return DynValue.ofString(sb.toString());
     }
 
     // ── String Verbs ──
