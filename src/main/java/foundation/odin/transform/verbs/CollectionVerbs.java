@@ -77,6 +77,13 @@ public final class CollectionVerbs {
         return new ArrayList<>();
     }
 
+    // Returns the backing list only when the value is genuinely array-like; null otherwise.
+    private static List<DynValue> arrayOrNull(DynValue v) {
+        var arr = v.asArray();
+        if (arr != null) return arr;
+        return v.extractArray();
+    }
+
     private static boolean isTruthy(DynValue v) {
         if (v.isNull()) return false;
         Boolean b = v.asBool();
@@ -91,7 +98,13 @@ public final class CollectionVerbs {
     }
 
     private static Double toDouble(DynValue v) {
-        return v.asDouble();
+        Double d = v.asDouble();
+        if (d != null) return d;
+        String s = v.asString();
+        if (s != null) {
+            try { return Double.parseDouble(s); } catch (NumberFormatException e) { return null; }
+        }
+        return null;
     }
 
     private static Integer toInt(DynValue v) {
@@ -132,8 +145,10 @@ public final class CollectionVerbs {
     }
 
     private static DynValue numericResult(double v) {
-        if (v == Math.floor(v) && Math.abs(v) < (double) Long.MAX_VALUE)
-            return DynValue.ofInteger((long) v);
+        if (Double.isNaN(v) || Double.isInfinite(v)) return DynValue.ofFloat(v);
+        double rounded = Math.rint(v);
+        if (Math.abs(v - rounded) < 1e-10 && Math.abs(rounded) < (double) Long.MAX_VALUE)
+            return DynValue.ofInteger((long) rounded);
         return DynValue.ofFloat(v);
     }
 
@@ -334,12 +349,16 @@ public final class CollectionVerbs {
 
     private static DynValue every(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofBool(true);
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         String fieldName = args.length >= 2 ? args[1].asString() : null;
+        String op = args.length >= 3 ? args[2].asString() : null;
 
         for (DynValue item : arr) {
-            DynValue testVal = fieldName != null ? getField(item, fieldName) : item;
-            if (!isTruthy(testVal)) return DynValue.ofBool(false);
+            boolean ok = (fieldName != null && op != null)
+                    ? matchesCondition(item, fieldName, op, args[3])
+                    : isTruthy(fieldName != null ? getField(item, fieldName) : item);
+            if (!ok) return DynValue.ofBool(false);
         }
 
         return DynValue.ofBool(true);
@@ -347,12 +366,16 @@ public final class CollectionVerbs {
 
     private static DynValue some(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofBool(false);
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         String fieldName = args.length >= 2 ? args[1].asString() : null;
+        String op = args.length >= 3 ? args[2].asString() : null;
 
         for (DynValue item : arr) {
-            DynValue testVal = fieldName != null ? getField(item, fieldName) : item;
-            if (isTruthy(testVal)) return DynValue.ofBool(true);
+            boolean ok = (fieldName != null && op != null)
+                    ? matchesCondition(item, fieldName, op, args[3])
+                    : isTruthy(fieldName != null ? getField(item, fieldName) : item);
+            if (ok) return DynValue.ofBool(true);
         }
 
         return DynValue.ofBool(false);
@@ -430,29 +453,32 @@ public final class CollectionVerbs {
 
     private static DynValue concatArrays(DynValue[] args, VerbContext ctx) {
         var result = new ArrayList<DynValue>();
+        boolean anyArray = false;
         for (DynValue arg : args) {
-            var arr = extractArray(arg);
-            result.addAll(arr);
+            var arr = arrayOrNull(arg);
+            if (arr != null) { anyArray = true; result.addAll(arr); }
         }
+        if (!anyArray) return DynValue.ofNull();
         return DynValue.ofArray(result);
     }
 
     private static DynValue zip(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofArray(new ArrayList<>());
+        if (args.length == 0) return DynValue.ofNull();
 
         var arrays = new ArrayList<List<DynValue>>();
-        int maxLen = 0;
+        int minLen = Integer.MAX_VALUE;
         for (DynValue arg : args) {
-            var arr = extractArray(arg);
+            var arr = arrayOrNull(arg);
+            if (arr == null) return DynValue.ofNull();
             arrays.add(arr);
-            if (arr.size() > maxLen) maxLen = arr.size();
+            if (arr.size() < minLen) minLen = arr.size();
         }
 
         var result = new ArrayList<DynValue>();
-        for (int i = 0; i < maxLen; i++) {
+        for (int i = 0; i < minLen; i++) {
             var tuple = new ArrayList<DynValue>();
             for (List<DynValue> array : arrays) {
-                tuple.add(i < array.size() ? array.get(i) : DynValue.ofNull());
+                tuple.add(array.get(i));
             }
             result.add(DynValue.ofArray(tuple));
         }
@@ -509,11 +535,12 @@ public final class CollectionVerbs {
 
     private static DynValue take(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         Integer count = toInt(args[1]);
-        if (count == null) return DynValue.ofNull();
+        if (count == null || count < 0) return DynValue.ofNull();
 
-        int n = Math.min(Math.max(0, count), arr.size());
+        int n = Math.min(count, arr.size());
         var result = new ArrayList<DynValue>();
         for (int i = 0; i < n; i++) result.add(arr.get(i));
         return DynValue.ofArray(result);
@@ -521,11 +548,12 @@ public final class CollectionVerbs {
 
     private static DynValue drop(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         Integer count = toInt(args[1]);
-        if (count == null) return DynValue.ofNull();
+        if (count == null || count < 0) return DynValue.ofNull();
 
-        int skip = Math.min(Math.max(0, count), arr.size());
+        int skip = Math.min(count, arr.size());
         var result = new ArrayList<DynValue>();
         for (int i = skip; i < arr.size(); i++) result.add(arr.get(i));
         return DynValue.ofArray(result);
@@ -533,7 +561,8 @@ public final class CollectionVerbs {
 
     private static DynValue chunk(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         Integer size = toInt(args[1]);
         if (size == null || size <= 0) return DynValue.ofNull();
 
@@ -588,7 +617,8 @@ public final class CollectionVerbs {
 
     private static DynValue compact(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         var result = new ArrayList<DynValue>();
 
         for (DynValue item : arr) {
@@ -678,7 +708,8 @@ public final class CollectionVerbs {
 
     private static DynValue dedupe(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         String keyField = args[1].asString();
 
         var seen = new HashSet<String>();
@@ -699,7 +730,8 @@ public final class CollectionVerbs {
 
     private static DynValue cumsum(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         var result = new ArrayList<DynValue>();
         double running = 0;
 
@@ -718,7 +750,8 @@ public final class CollectionVerbs {
 
     private static DynValue cumprod(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         var result = new ArrayList<DynValue>();
         double running = 1;
 
@@ -737,14 +770,18 @@ public final class CollectionVerbs {
 
     private static DynValue diff(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
+        int periods = 1;
+        if (args.length >= 2) {
+            Integer p = toInt(args[1]);
+            if (p != null) periods = Math.max(1, p);
+        }
         var result = new ArrayList<DynValue>();
-
-        if (!arr.isEmpty()) result.add(DynValue.ofNull());
-
-        for (int i = 1; i < arr.size(); i++) {
+        for (int i = 0; i < arr.size(); i++) {
+            if (i < periods) { result.add(DynValue.ofNull()); continue; }
             Double curr = toDouble(arr.get(i));
-            Double prev = toDouble(arr.get(i - 1));
+            Double prev = toDouble(arr.get(i - periods));
             if (curr != null && prev != null)
                 result.add(numericResult(curr - prev));
             else
@@ -756,16 +793,20 @@ public final class CollectionVerbs {
 
     private static DynValue pctChange(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
+        int periods = 1;
+        if (args.length >= 2) {
+            Integer p = toInt(args[1]);
+            if (p != null) periods = Math.max(1, p);
+        }
         var result = new ArrayList<DynValue>();
-
-        if (!arr.isEmpty()) result.add(DynValue.ofNull());
-
-        for (int i = 1; i < arr.size(); i++) {
+        for (int i = 0; i < arr.size(); i++) {
+            if (i < periods) { result.add(DynValue.ofNull()); continue; }
             Double curr = toDouble(arr.get(i));
-            Double prev = toDouble(arr.get(i - 1));
+            Double prev = toDouble(arr.get(i - periods));
             if (curr != null && prev != null && prev != 0.0)
-                result.add(DynValue.ofFloat((curr - prev) / prev));
+                result.add(numericResult((curr - prev) / prev));
             else
                 result.add(DynValue.ofNull());
         }
@@ -774,53 +815,55 @@ public final class CollectionVerbs {
     }
 
     private static DynValue shift(DynValue[] args, VerbContext ctx) {
-        if (args.length < 2) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
-        Integer n = toInt(args[1]);
-        if (n == null) return DynValue.ofArray(new ArrayList<>(arr));
-        return shiftArray(arr, n);
+        if (args.length == 0) return DynValue.ofNull();
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
+        int n = 1;
+        if (args.length >= 2) {
+            Integer nVal = toInt(args[1]);
+            if (nVal != null) n = nVal;
+        }
+        DynValue fill = args.length >= 3 ? args[2] : DynValue.ofNull();
+        return shiftArray(arr, n, fill);
     }
 
     private static DynValue lag(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         int n = 1;
         if (args.length >= 2) {
             Integer nVal = toInt(args[1]);
-            if (nVal != null) n = nVal;
+            if (nVal != null) n = Math.max(1, nVal);
         }
-        return shiftArray(arr, n);
+        DynValue fill = args.length >= 3 ? args[2] : DynValue.ofNull();
+        return shiftArray(arr, n, fill);
     }
 
     private static DynValue lead(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
         int n = 1;
         if (args.length >= 2) {
             Integer nVal = toInt(args[1]);
-            if (nVal != null) n = nVal;
+            if (nVal != null) n = Math.max(1, nVal);
         }
-        return shiftArray(arr, -n);
+        DynValue fill = args.length >= 3 ? args[2] : DynValue.ofNull();
+        return shiftArray(arr, -n, fill);
     }
 
-    private static DynValue shiftArray(List<DynValue> arr, int n) {
-        var result = new ArrayList<DynValue>(arr.size());
-        int absN = Math.abs(n);
-
-        if (n > 0) {
-            for (int i = 0; i < Math.min(absN, arr.size()); i++)
-                result.add(DynValue.ofNull());
-            for (int i = 0; i < arr.size() - absN; i++)
-                result.add(arr.get(i));
-        } else if (n < 0) {
-            for (int i = absN; i < arr.size(); i++)
-                result.add(arr.get(i));
-            for (int i = 0; i < Math.min(absN, arr.size()); i++)
-                result.add(DynValue.ofNull());
+    private static DynValue shiftArray(List<DynValue> arr, int n, DynValue fill) {
+        int length = arr.size();
+        var result = new ArrayList<DynValue>(length);
+        if (n >= 0) {
+            for (int i = 0; i < length; i++)
+                result.add(i < n ? fill : arr.get(i - n));
         } else {
-            result.addAll(arr);
+            int absN = -n;
+            for (int i = 0; i < length; i++)
+                result.add(i >= length - absN ? fill : arr.get(i + absN));
         }
-
         return DynValue.ofArray(result);
     }
 
@@ -871,33 +914,41 @@ public final class CollectionVerbs {
     }
 
     private static DynValue fillMissing(DynValue[] args, VerbContext ctx) {
-        if (args.length < 2) return DynValue.ofNull();
-        var arr = extractArray(args[0]);
-        String strategyStr = args[1].asString();
+        if (args.length < 1) return DynValue.ofNull();
+        var arr = arrayOrNull(args[0]);
+        if (arr == null) return DynValue.ofNull();
+        DynValue fillValue = args.length >= 2 ? args[1] : DynValue.ofNull();
+        String strategy = args.length >= 3 && args[2].asString() != null
+                ? args[2].asString().toLowerCase() : "value";
 
         var result = new ArrayList<>(arr);
 
-        if ("forward".equals(strategyStr)) {
-            DynValue last = null;
+        if ("forward".equals(strategy)) {
+            DynValue last = fillValue;
             for (int i = 0; i < result.size(); i++) {
-                if (result.get(i).isNull() && last != null)
-                    result.set(i, last);
-                else if (!result.get(i).isNull())
-                    last = result.get(i);
+                if (result.get(i).isNull()) result.set(i, last);
+                else last = result.get(i);
             }
-        } else if ("backward".equals(strategyStr)) {
-            DynValue next = null;
+        } else if ("backward".equals(strategy)) {
+            DynValue next = fillValue;
             for (int i = result.size() - 1; i >= 0; i--) {
-                if (result.get(i).isNull() && next != null)
-                    result.set(i, next);
-                else if (!result.get(i).isNull())
-                    next = result.get(i);
+                if (result.get(i).isNull()) result.set(i, next);
+                else next = result.get(i);
             }
+        } else if ("mean".equals(strategy)) {
+            double total = 0; int count = 0;
+            for (var item : result) {
+                if (!item.isNull()) {
+                    Double n = toDouble(item);
+                    if (n != null) { total += n; count++; }
+                }
+            }
+            DynValue meanVal = DynValue.ofFloat(count > 0 ? total / count : 0.0);
+            for (int i = 0; i < result.size(); i++)
+                if (result.get(i).isNull()) result.set(i, meanVal);
         } else {
-            for (int i = 0; i < result.size(); i++) {
-                if (result.get(i).isNull())
-                    result.set(i, args[1]);
-            }
+            for (int i = 0; i < result.size(); i++)
+                if (result.get(i).isNull()) result.set(i, fillValue);
         }
 
         return DynValue.ofArray(result);

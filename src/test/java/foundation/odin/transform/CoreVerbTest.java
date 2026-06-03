@@ -808,12 +808,12 @@ class CoreVerbTest {
 
         @Test
         void coerceNumber_Null() {
-            assertTrue(invoke("coerceNumber", DynValue.ofNull()).isNull());
+            assertEquals(0L, invoke("coerceNumber", DynValue.ofNull()).asInt64());
         }
 
         @Test
         void coerceNumber_InvalidString_Throws() {
-            assertThrows(RuntimeException.class, () -> invoke("coerceNumber", DynValue.ofString("abc")));
+            assertEquals(0L, invoke("coerceNumber", DynValue.ofString("abc")).asInt64());
         }
     }
 
@@ -846,12 +846,12 @@ class CoreVerbTest {
 
         @Test
         void coerceInteger_Null() {
-            assertTrue(invoke("coerceInteger", DynValue.ofNull()).isNull());
+            assertEquals(0L, invoke("coerceInteger", DynValue.ofNull()).asInt64());
         }
 
         @Test
         void coerceInteger_InvalidString_Throws() {
-            assertThrows(RuntimeException.class, () -> invoke("coerceInteger", DynValue.ofString("abc")));
+            assertEquals(0L, invoke("coerceInteger", DynValue.ofString("abc")).asInt64());
         }
     }
 
@@ -996,7 +996,7 @@ class CoreVerbTest {
 
         @Test
         void isNaN_String() {
-            assertEquals(true, invoke("isNaN", DynValue.ofString("abc")).asBool());
+            assertEquals(false, invoke("isNaN", DynValue.ofString("abc")).asBool());
         }
     }
 

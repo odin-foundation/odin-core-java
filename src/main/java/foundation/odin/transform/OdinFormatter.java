@@ -188,27 +188,23 @@ public final class OdinFormatter {
         sb.append('{').append(displayPath).append("}\n");
         lastCtx[0] = fullPath;
 
-        // Pass 1: scalar assignments and pure leaf chains
+        // Pass 1: scalars, leaf chains, and arrays interleave in declaration order.
         for (var entry : entries) {
             var child = entry.getValue();
             String childFullPath = fullPath + "." + entry.getKey();
-            if (child.getType() == DynValue.Type.Object && isPureLeafChain(child)) {
+            var t = child.getType();
+            if (t == DynValue.Type.Object && isPureLeafChain(child)) {
                 collectLeafPathsInner(sb, entry.getKey(), child, childFullPath, modifiers);
-            } else if (child.getType() != DynValue.Type.Object && child.getType() != DynValue.Type.Array) {
+            } else if (t == DynValue.Type.Array) {
+                String arrParent = lastCtx[0].equals(fullPath) ? fullPath : null;
+                writeArraySection(sb, entry.getKey(), arrParent, child.asArray(), modifiers);
+                lastCtx[0] = fullPath;
+            } else if (t != DynValue.Type.Object) {
                 writeAssignment(sb, entry.getKey(), child, childFullPath, modifiers);
             }
         }
 
-        // Pass 2: array sections
-        for (var entry : entries) {
-            if (entry.getValue().getType() == DynValue.Type.Array) {
-                String arrParent = lastCtx[0].equals(fullPath) ? fullPath : null;
-                writeArraySection(sb, entry.getKey(), arrParent, entry.getValue().asArray(), modifiers);
-                lastCtx[0] = fullPath;
-            }
-        }
-
-        // Pass 3: object subsections (non-leaf-chain)
+        // Pass 2: object subsections (non-leaf-chain) trail the section's flat fields.
         for (var entry : entries) {
             var child = entry.getValue();
             if (child.getType() == DynValue.Type.Object && !isPureLeafChain(child)) {

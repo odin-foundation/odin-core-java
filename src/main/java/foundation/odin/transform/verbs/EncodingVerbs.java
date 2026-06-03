@@ -106,6 +106,10 @@ public final class EncodingVerbs {
         if (args.length == 0) return DynValue.ofNull();
         var s = coerceStr(args[0]);
         if (s == null) return DynValue.ofNull();
+        // Accept the URL-safe alphabet and tolerate missing padding.
+        s = s.replace('-', '+').replace('_', '/');
+        int pad = 4 - s.length() % 4;
+        if (pad != 4) s += "=".repeat(pad);
         try {
             return DynValue.ofString(new String(Base64.getDecoder().decode(s), StandardCharsets.UTF_8));
         } catch (IllegalArgumentException e) {
@@ -117,32 +121,68 @@ public final class EncodingVerbs {
         if (args.length == 0) return DynValue.ofNull();
         var s = coerceStr(args[0]);
         if (s == null) return DynValue.ofNull();
-        return DynValue.ofString(URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20"));
+        return DynValue.ofString(URLEncoder.encode(s, StandardCharsets.UTF_8)
+                .replace("+", "%20").replace("%7E", "~"));
     }
 
     private static DynValue urlDecode(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
         var s = coerceStr(args[0]);
         if (s == null) return DynValue.ofNull();
-        return DynValue.ofString(URLDecoder.decode(s, StandardCharsets.UTF_8));
+        // Reject malformed percent-encoding (% not followed by two hex digits).
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == '%') {
+                if (i + 2 >= s.length()
+                        || Character.digit(s.charAt(i + 1), 16) < 0
+                        || Character.digit(s.charAt(i + 2), 16) < 0) {
+                    return DynValue.ofNull();
+                }
+            }
+        }
+        try {
+            return DynValue.ofString(URLDecoder.decode(s, StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException e) {
+            return DynValue.ofNull();
+        }
     }
 
     private static DynValue jsonEncode(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
         if (args[0].isNull()) return DynValue.ofString("null");
-        return DynValue.ofString(serializeDynValue(args[0]));
+        var t = args[0].getType();
+        if (t == DynValue.Type.Object || t == DynValue.Type.Array) {
+            return DynValue.ofString(serializeDynValue(args[0]));
+        }
+        // Scalars: JSON-escape the string form and strip the surrounding quotes.
+        String s = VerbHelpers.coerceStr(args[0]);
+        String quoted = new com.google.gson.JsonPrimitive(s).toString();
+        return DynValue.ofString(quoted.substring(1, quoted.length() - 1));
     }
 
     private static DynValue jsonDecode(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofNull();
         var s = coerceStr(args[0]);
         if (s == null) return DynValue.ofNull();
-        try {
-            JsonElement element = JsonParser.parseString(s);
-            return DynValue.fromJsonElement(element);
-        } catch (Exception e) {
-            return DynValue.ofNull();
+        if (s.startsWith("{") || s.startsWith("[")) {
+            try {
+                JsonElement element = JsonParser.parseString(s);
+                if (element.isJsonObject() || element.isJsonArray()) {
+                    return DynValue.fromJsonElement(element);
+                }
+            } catch (Exception e) {
+                // fall through to string unescape
+            }
         }
+        // Treat as a JSON string body and unescape it.
+        try {
+            JsonElement element = JsonParser.parseString("\"" + s + "\"");
+            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                return DynValue.ofString(element.getAsString());
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        return DynValue.ofNull();
     }
 
     private static DynValue hexEncode(DynValue[] args, VerbContext ctx) {
@@ -156,6 +196,10 @@ public final class EncodingVerbs {
         if (args.length == 0) return DynValue.ofNull();
         var s = coerceStr(args[0]);
         if (s == null) return DynValue.ofNull();
+        if (s.length() % 2 != 0) return DynValue.ofNull();
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.digit(s.charAt(i), 16) < 0) return DynValue.ofNull();
+        }
         try {
             return DynValue.ofString(new String(hexToBytes(s), StandardCharsets.UTF_8));
         } catch (Exception e) {

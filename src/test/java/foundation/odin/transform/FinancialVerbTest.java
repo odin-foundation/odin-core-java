@@ -88,7 +88,7 @@ class FinancialVerbTest {
 
     @Test
     void formatInteger_Negative() {
-        assertEquals(S("-2"), invoke("formatInteger", F(-2.3)));
+        assertEquals(S("-3"), invoke("formatInteger", F(-2.3)));
     }
 
     @Test
@@ -911,7 +911,7 @@ class FinancialVerbTest {
 
     @Test
     void round_Negative() {
-        assertNumeric(invoke("round", F(-2.5)), -3.0, 1e-10);
+        assertNumeric(invoke("round", F(-2.5)), -2.0, 1e-10);
     }
 
     // =========================================================================
@@ -967,7 +967,7 @@ class FinancialVerbTest {
 
     @Test
     void add_NullArg() {
-        assertTrue(invoke("add", Null(), I(5)).isNull());
+        assertNumeric(invoke("add", Null(), I(5)), 5.0, 1e-10);
     }
 
     @Test
@@ -987,12 +987,12 @@ class FinancialVerbTest {
 
     @Test
     void floor_NullArg() {
-        assertTrue(invoke("floor", Null()).isNull());
+        assertNumeric(invoke("floor", Null()), 0.0, 1e-10);
     }
 
     @Test
     void ceil_NullArg() {
-        assertTrue(invoke("ceil", Null()).isNull());
+        assertNumeric(invoke("ceil", Null()), 0.0, 1e-10);
     }
 
     @Test
@@ -1037,12 +1037,12 @@ class FinancialVerbTest {
 
     @Test
     void abs_NullArg() {
-        assertTrue(invoke("abs", Null()).isNull());
+        assertNumeric(invoke("abs", Null()), 0.0, 1e-10);
     }
 
     @Test
     void round_NullArg() {
-        assertTrue(invoke("round", Null()).isNull());
+        assertNumeric(invoke("round", Null()), 0.0, 1e-10);
     }
 
     @Test

@@ -536,8 +536,8 @@ class NumericVerbExtendedTest {
     // =========================================================================
 
     @Test void formatNumber_NullInput() { assertTrue(invoke("formatNumber", Null(), I(2)).isNull()); }
-    @Test void floor_NullInput() { assertTrue(invoke("floor", Null()).isNull()); }
-    @Test void ceil_NullInput() { assertTrue(invoke("ceil", Null()).isNull()); }
+    @Test void floor_NullInput() { assertNumeric(invoke("floor", Null()), 0.0, 1e-10); }
+    @Test void ceil_NullInput() { assertNumeric(invoke("ceil", Null()), 0.0, 1e-10); }
 
     // =========================================================================
     // 20. DATETIME: FORMAT_DATE / FORMAT_TIME
@@ -733,7 +733,7 @@ class NumericVerbExtendedTest {
     }
 
     @Test void dayOfWeek_Sunday() {
-        assertNumeric(invoke("dayOfWeek", S("2024-01-07")), 0.0, 1e-10);
+        assertNumeric(invoke("dayOfWeek", S("2024-01-07")), 7.0, 1e-10);
     }
 
     @Test void dayOfWeek_Saturday() {
@@ -753,7 +753,7 @@ class NumericVerbExtendedTest {
         Double d = result.asDouble();
         Long i = result.asInt64();
         double v = d != null ? d : (i != null ? (double) i : -1);
-        assertTrue(v >= 52 && v <= 53, "week=" + v);
+        assertEquals(1.0, v, "week=" + v);
     }
 
     @Test void quarter_Q1() {
@@ -822,7 +822,7 @@ class NumericVerbExtendedTest {
     }
 
     @Test void daysBetween_ReversedOrder() {
-        assertNumeric(invoke("daysBetweenDates", S("2024-06-16"), S("2024-06-15")), 1.0, 1e-10);
+        assertNumeric(invoke("daysBetweenDates", S("2024-06-16"), S("2024-06-15")), -1.0, 1e-10);
     }
 
     @Test void daysBetween_LeapYear() {

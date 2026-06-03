@@ -32,57 +32,31 @@ public final class CoercionVerbs {
         return DynValue.ofString(VerbHelpers.coerceStr(args[0]));
     }
 
-    private static DynValue coerceNumber(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0)
-            throw new IllegalStateException("coerceNumber: requires 1 argument");
-        var val = args[0];
-        if (val.isNull()) return DynValue.ofNull();
+    private static double toNumber(DynValue v) {
+        Double d = VerbHelpers.coerceNum(v);
+        return d != null ? d : 0.0;
+    }
 
-        return switch (val.getType()) {
-            case Integer -> DynValue.ofFloat((double) val.asInt64());
-            case Float -> val;
-            case String -> {
-                var s = val.asString();
-                try {
-                    yield DynValue.ofFloat(Double.parseDouble(s));
-                } catch (NumberFormatException e) {
-                    throw new IllegalStateException("coerceNumber: cannot parse '" + s + "' as number");
-                }
-            }
-            case Bool -> DynValue.ofFloat(val.asBool() ? 1.0 : 0.0);
-            default -> throw new IllegalStateException("coerceNumber: unsupported type");
-        };
+    private static DynValue numericResult(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return DynValue.ofFloat(v);
+        double rounded = Math.rint(v);
+        if (Math.abs(v - rounded) < 1e-10 && Math.abs(rounded) < (double) Long.MAX_VALUE)
+            return DynValue.ofInteger((long) rounded);
+        return DynValue.ofFloat(v);
+    }
+
+    private static DynValue coerceNumber(DynValue[] args, VerbContext ctx) {
+        if (args.length == 0) return DynValue.ofNull();
+        return numericResult(toNumber(args[0]));
     }
 
     private static DynValue coerceInteger(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0)
-            throw new IllegalStateException("coerceInteger: requires 1 argument");
-        var val = args[0];
-        if (val.isNull()) return DynValue.ofNull();
-
-        return switch (val.getType()) {
-            case Integer -> val;
-            case Float -> DynValue.ofInteger((long) val.asDouble().doubleValue());
-            case String -> {
-                var s = val.asString();
-                try {
-                    yield DynValue.ofInteger(Long.parseLong(s));
-                } catch (NumberFormatException e) {
-                    try {
-                        yield DynValue.ofInteger((long) Double.parseDouble(s));
-                    } catch (NumberFormatException e2) {
-                        throw new IllegalStateException("coerceInteger: cannot parse '" + s + "' as integer");
-                    }
-                }
-            }
-            case Bool -> DynValue.ofInteger(val.asBool() ? 1L : 0L);
-            default -> throw new IllegalStateException("coerceInteger: unsupported type");
-        };
+        if (args.length == 0) return DynValue.ofNull();
+        return DynValue.ofInteger((long) Math.floor(toNumber(args[0])));
     }
 
     private static DynValue coerceBoolean(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0)
-            throw new IllegalStateException("coerceBoolean: requires 1 argument");
+        if (args.length == 0) return DynValue.ofNull();
         var val = args[0];
         if (val.isNull()) return DynValue.ofBool(false);
 
@@ -90,42 +64,72 @@ public final class CoercionVerbs {
             case Bool -> val;
             case String -> {
                 var s = val.asString().trim().toLowerCase(Locale.ROOT);
-                boolean isFalsy = s.isEmpty() || "false".equals(s) || "0".equals(s) || "no".equals(s) || "n".equals(s) || "off".equals(s);
-                yield DynValue.ofBool(!isFalsy);
+                yield DynValue.ofBool(s.equals("true") || s.equals("yes")
+                        || s.equals("y") || s.equals("1"));
             }
             case Integer -> DynValue.ofBool(val.asInt64() != 0);
             case Float -> DynValue.ofBool(val.asDouble() != 0.0);
-            default -> throw new IllegalStateException("coerceBoolean: unsupported type");
+            default -> DynValue.ofBool(VerbHelpers.isTruthy(val));
         };
     }
 
     private static DynValue coerceDate(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0)
-            throw new IllegalStateException("coerceDate: requires 1 argument");
+        if (args.length == 0) return DynValue.ofNull();
         var val = args[0];
         if (val.isNull()) return DynValue.ofNull();
 
-        return switch (val.getType()) {
-            case String, Date, Timestamp -> {
-                var s = val.asString();
-                if (s.length() >= 10 && isValidDatePrefix(s)) {
-                    var datePart = s.substring(0, 10);
-                    try {
-                        int month = Integer.parseInt(datePart.substring(5, 7));
-                        int day = Integer.parseInt(datePart.substring(8, 10));
-                        if (month >= 1 && month <= 12 && day >= 1 && day <= 31)
-                            yield DynValue.ofDate(datePart);
-                    } catch (NumberFormatException ignored) {}
-                }
-                throw new IllegalStateException("coerceDate: '" + s + "' is not a valid date");
-            }
-            case Integer -> {
-                var secs = val.asInt64();
-                var dt = Instant.ofEpochSecond(secs).atOffset(ZoneOffset.UTC);
-                yield DynValue.ofDate(dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
-            }
-            default -> throw new IllegalStateException("coerceDate: expected string argument");
-        };
+        if (val.getType() == DynValue.Type.Date) return val;
+        if (val.getType() == DynValue.Type.Timestamp) {
+            var s = val.asString();
+            int t = s.indexOf('T');
+            return DynValue.ofDate(t >= 0 ? s.substring(0, t) : s);
+        }
+        if (val.getType() == DynValue.Type.Integer) {
+            var dt = Instant.ofEpochSecond(val.asInt64()).atOffset(ZoneOffset.UTC);
+            return DynValue.ofDate(dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
+        }
+
+        var s = VerbHelpers.coerceStr(val);
+        if (s.isEmpty()) return DynValue.ofNull();
+
+        if (s.length() >= 10 && isValidDatePrefix(s)) {
+            var datePart = s.substring(0, 10);
+            int month = Integer.parseInt(datePart.substring(5, 7));
+            int day = Integer.parseInt(datePart.substring(8, 10));
+            if (month >= 1 && month <= 12 && day >= 1 && day <= 31)
+                return DynValue.ofDate(datePart);
+            return DynValue.ofNull();
+        }
+
+        var compact = s.matches("\\d{8}") ? s : null;
+        if (compact != null) {
+            int y = Integer.parseInt(s.substring(0, 4));
+            int mo = Integer.parseInt(s.substring(4, 6));
+            int d = Integer.parseInt(s.substring(6, 8));
+            if (validYmd(y, mo, d)) return DynValue.ofDate(String.format("%04d-%02d-%02d", y, mo, d));
+            return DynValue.ofNull();
+        }
+
+        var slash = java.util.regex.Pattern.compile("^(\\d{1,2})/(\\d{1,2})/(\\d{4})$").matcher(s);
+        if (slash.matches()) {
+            int first = Integer.parseInt(slash.group(1));
+            int second = Integer.parseInt(slash.group(2));
+            int y = Integer.parseInt(slash.group(3));
+            int mo, d;
+            if (first > 12) { d = first; mo = second; } else { mo = first; d = second; }
+            if (validYmd(y, mo, d)) return DynValue.ofDate(String.format("%04d-%02d-%02d", y, mo, d));
+            return DynValue.ofNull();
+        }
+
+        return DynValue.ofNull();
+    }
+
+    private static boolean validYmd(int y, int mo, int d) {
+        if (mo < 1 || mo > 12 || d < 1) return false;
+        int[] days = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        int max = days[mo - 1];
+        if (mo == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) max = 29;
+        return d <= max;
     }
 
     private static DynValue coerceTimestamp(DynValue[] args, VerbContext ctx) {
@@ -191,8 +195,7 @@ public final class CoercionVerbs {
     }
 
     private static DynValue toObject(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0)
-            throw new IllegalStateException("toObject: requires 1 argument");
+        if (args.length == 0) return DynValue.ofNull();
         var val = args[0];
         if (val.isNull()) return DynValue.ofNull();
         if (val.getType() == DynValue.Type.Object) return val;
@@ -202,21 +205,21 @@ public final class CoercionVerbs {
             var entries = new ArrayList<Map.Entry<String, DynValue>>();
             for (var item : arr) {
                 var pair = item.asArray();
-                if (pair == null || pair.size() < 2)
-                    throw new IllegalStateException("toObject: array elements must be [key, value] pairs");
-                String key;
-                if (pair.get(0).getType() == DynValue.Type.String)
-                    key = pair.get(0).asString();
-                else if (pair.get(0).getType() == DynValue.Type.Integer)
-                    key = Long.toString(pair.get(0).asInt64());
-                else
-                    key = VerbHelpers.coerceStr(pair.get(0));
-                entries.add(Map.entry(key, pair.get(1)));
+                if (pair != null && pair.size() >= 2) {
+                    entries.add(Map.entry(VerbHelpers.coerceStr(pair.get(0)), pair.get(1)));
+                } else if (item.getType() == DynValue.Type.Object) {
+                    var keyV = item.get("key");
+                    var valV = item.get("value");
+                    if (keyV != null) {
+                        entries.add(Map.entry(VerbHelpers.coerceStr(keyV),
+                                valV != null ? valV : DynValue.ofNull()));
+                    }
+                }
             }
-            return DynValue.ofObject(entries);
+            if (!entries.isEmpty()) return DynValue.ofObject(entries);
         }
 
-        throw new IllegalStateException("toObject: expected array of [key, value] pairs");
+        return DynValue.ofNull();
     }
 
     static boolean isValidDatePrefix(String s) {

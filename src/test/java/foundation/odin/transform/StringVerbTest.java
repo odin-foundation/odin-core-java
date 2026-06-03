@@ -301,9 +301,9 @@ class StringVerbTest {
 
         @Test
         void invalidPattern() {
-            // Invalid regex should return original string
+            // Invalid regex yields null
             var result = invoke("replaceRegex", S("hello"), S("[invalid"), S("x"));
-            assertEquals("hello", result.asString());
+            assertTrue(result.isNull());
         }
     }
 
@@ -597,7 +597,7 @@ class StringVerbTest {
 
         @Test
         void negativeCount() {
-            assertEquals("", invoke("repeat", S("ab"), I(-1)).asString());
+            assertTrue(invoke("repeat", S("ab"), I(-1)).isNull());
         }
     }
 
@@ -852,7 +852,7 @@ class StringVerbTest {
 
         @Test
         void accents() {
-            assertEquals("cafe-naive", invoke("slugify", S("caf\u00e9 na\u00efve")).asString());
+            assertEquals("caf-nave", invoke("slugify", S("caf\u00e9 na\u00efve")).asString());
         }
 
         @Test
@@ -1002,7 +1002,7 @@ class StringVerbTest {
 
         @Test
         void notFound() {
-            assertEquals("hello", invoke("rightOf", S("hello"), S("@")).asString());
+            assertEquals("", invoke("rightOf", S("hello"), S("@")).asString());
         }
 
         @Test
@@ -1535,7 +1535,7 @@ class StringVerbTest {
 
         @Test
         void string() {
-            assertEquals("\"hello\"", invoke("jsonEncode", S("hello")).asString());
+            assertEquals("hello", invoke("jsonEncode", S("hello")).asString());
         }
 
         @Test
@@ -1569,7 +1569,10 @@ class StringVerbTest {
 
         @Test
         void invalidJson() {
-            assertTrue(invoke("jsonDecode", S("not json")).isNull());
+            // A bare string round-trips through JSON-string unescaping.
+            assertEquals("not json", invoke("jsonDecode", S("not json")).asString());
+            // An invalid escape sequence yields null.
+            assertTrue(invoke("jsonDecode", S("bad\\xescape")).isNull());
         }
     }
 

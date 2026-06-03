@@ -147,8 +147,9 @@ public final class FinancialVerbs {
 
     private static DynValue numericResult(double v) {
         if (Double.isNaN(v) || Double.isInfinite(v)) return DynValue.ofNull();
-        if (v == Math.floor(v) && Math.abs(v) < (double) Long.MAX_VALUE)
-            return DynValue.ofInteger((long) v);
+        double rounded = Math.rint(v);
+        if (Math.abs(v - rounded) < 1e-10 && Math.abs(rounded) < (double) Long.MAX_VALUE)
+            return DynValue.ofInteger((long) rounded);
         return DynValue.ofFloat(v);
     }
 
@@ -193,11 +194,15 @@ public final class FinancialVerbs {
     // ── Math Verbs ──
 
     private static DynValue log(DynValue[] args, VerbContext ctx) {
-        if (args.length < 2) return DynValue.ofNull();
+        if (args.length < 1) return DynValue.ofNull();
         Double val = toDouble(args[0]);
-        Double b = toDouble(args[1]);
-        if (val == null || b == null) return DynValue.ofNull();
-        return numericResult(Math.log(val) / Math.log(b));
+        if (val == null || val <= 0) return DynValue.ofNull();
+        if (args.length >= 2) {
+            Double b = toDouble(args[1]);
+            if (b == null || b <= 0 || b == 1.0) return DynValue.ofNull();
+            return numericResult(Math.log(val) / Math.log(b));
+        }
+        return numericResult(Math.log(val));
     }
 
     private static DynValue ln(DynValue[] args, VerbContext ctx) {
@@ -419,12 +424,10 @@ public final class FinancialVerbs {
         if (args.length < 2) return DynValue.ofNull();
         List<Double> vals = extractDoubles(args[0]);
         Double p = toDouble(args[1]);
-        if (vals == null || vals.isEmpty() || p == null) return DynValue.ofNull();
+        if (vals == null || vals.isEmpty() || p == null || p < 0 || p > 100) return DynValue.ofNull();
 
         Collections.sort(vals);
         double pct = p;
-        if (pct < 0) pct = 0;
-        if (pct > 100) pct = 100;
 
         double rankVal = (pct / 100.0) * (vals.size() - 1);
         int lower = (int) Math.floor(rankVal);
@@ -440,7 +443,7 @@ public final class FinancialVerbs {
     private static DynValue quantile(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
         Double q = toDouble(args[1]);
-        if (q == null) return DynValue.ofNull();
+        if (q == null || q < 0 || q > 1) return DynValue.ofNull();
 
         var pctArgs = new DynValue[] { args[0], DynValue.ofFloat(q * 100.0) };
         return percentile(pctArgs, ctx);
@@ -612,8 +615,8 @@ public final class FinancialVerbs {
         Double cost = toDouble(args[0]);
         Double salvage = toDouble(args[1]);
         Double life = toDouble(args[2]);
-        if (cost == null || salvage == null || life == null) return DynValue.ofNull();
-        if (life == 0.0) return DynValue.ofNull();
+        if (cost == null || salvage == null || life == null || life <= 0) return DynValue.ofNull();
+        if (salvage > cost) return DynValue.ofNull();
         return numericResult((cost - salvage) / life);
     }
 

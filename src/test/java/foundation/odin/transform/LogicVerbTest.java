@@ -246,8 +246,8 @@ class LogicVerbTest {
     // isDate
     // =========================================================================
 
-    @Test void isDate_Valid() { assertTrue(invoke("isDate", S("2024-01-15")).asBool()); }
-    @Test void isDate_Timestamp() { assertTrue(invoke("isDate", S("2024-01-15T10:30:00")).asBool()); }
+    @Test void isDate_Valid() { assertFalse(invoke("isDate", S("2024-01-15")).asBool()); }
+    @Test void isDate_Timestamp() { assertTrue(invoke("isDate", DynValue.ofTimestamp("2024-01-15T10:30:00")).asBool()); }
     @Test void isDate_Invalid() { assertFalse(invoke("isDate", S("not-a-date")).asBool()); }
     @Test void isDate_Int() { assertFalse(invoke("isDate", I(20240115)).asBool()); }
     @Test void isDate_Null() { assertFalse(invoke("isDate", Null()).asBool()); }
@@ -483,15 +483,15 @@ class LogicVerbTest {
     }
 
     @Test void coerceNumber_FromNull() {
-        assertTrue(invoke("coerceNumber", Null()).isNull());
+        assertEquals(Long.valueOf(0), invoke("coerceNumber", Null()).asInt64());
     }
 
     @Test void coerceNumber_InvalidString() {
-        assertThrows(Exception.class, () -> invoke("coerceNumber", S("abc")));
+        assertEquals(Long.valueOf(0), invoke("coerceNumber", S("abc")).asInt64());
     }
 
     @Test void coerceNumber_NoArgs() {
-        assertThrows(Exception.class, () -> invoke("coerceNumber"));
+        assertTrue(invoke("coerceNumber").isNull());
     }
 
     // =========================================================================
@@ -523,15 +523,15 @@ class LogicVerbTest {
     }
 
     @Test void coerceInteger_FromNull() {
-        assertTrue(invoke("coerceInteger", Null()).isNull());
+        assertEquals(Long.valueOf(0), invoke("coerceInteger", Null()).asInt64());
     }
 
     @Test void coerceInteger_InvalidString() {
-        assertThrows(Exception.class, () -> invoke("coerceInteger", S("abc")));
+        assertEquals(Long.valueOf(0), invoke("coerceInteger", S("abc")).asInt64());
     }
 
     @Test void coerceInteger_NoArgs() {
-        assertThrows(Exception.class, () -> invoke("coerceInteger"));
+        assertTrue(invoke("coerceInteger").isNull());
     }
 
     // =========================================================================
@@ -551,7 +551,7 @@ class LogicVerbTest {
     @Test void coerceBoolean_FromNull() { assertFalse(invoke("coerceBoolean", Null()).asBool()); }
     @Test void coerceBoolean_FromStringN() { assertFalse(invoke("coerceBoolean", S("n")).asBool()); }
     @Test void coerceBoolean_FromStringOff() { assertFalse(invoke("coerceBoolean", S("off")).asBool()); }
-    @Test void coerceBoolean_NoArgs() { assertThrows(Exception.class, () -> invoke("coerceBoolean")); }
+    @Test void coerceBoolean_NoArgs() { assertTrue(invoke("coerceBoolean").isNull()); }
 
     // =========================================================================
     // coerceDate
@@ -566,7 +566,7 @@ class LogicVerbTest {
     }
 
     @Test void coerceDate_Invalid() {
-        assertThrows(Exception.class, () -> invoke("coerceDate", S("not-a-date")));
+        assertTrue(invoke("coerceDate", S("not-a-date")).isNull());
     }
 
     @Test void coerceDate_Null() {
@@ -574,7 +574,7 @@ class LogicVerbTest {
     }
 
     @Test void coerceDate_NoArgs() {
-        assertThrows(Exception.class, () -> invoke("coerceDate"));
+        assertTrue(invoke("coerceDate").isNull());
     }
 
     // =========================================================================
@@ -703,11 +703,11 @@ class LogicVerbTest {
     }
 
     @Test void toObject_NoArgs() {
-        assertThrows(Exception.class, () -> invoke("toObject"));
+        assertTrue(invoke("toObject").isNull());
     }
 
     @Test void toObject_InvalidPairs() {
-        assertThrows(Exception.class, () -> invoke("toObject", Arr(I(1), I(2))));
+        assertTrue(invoke("toObject", Arr(I(1), I(2))).isNull());
     }
 
     // =========================================================================

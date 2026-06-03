@@ -709,8 +709,8 @@ class CollectionVerbTest {
         var a = Arr(I(1), I(2), I(3));
         var b = Arr(S("a"));
         var result = invoke("zip", a, b);
-        // .NET implementation pads with null for shorter arrays
-        assertEquals(3, result.asArray().size());
+        // Truncates to the shortest input length.
+        assertEquals(1, result.asArray().size());
     }
 
     @Test
@@ -1218,7 +1218,7 @@ class CollectionVerbTest {
 
     @Test
     void has_withNullValue() {
-        assertTrue(invoke("has", Obj(e("key", Null())), S("key")).asBool());
+        assertFalse(invoke("has", Obj(e("key", Null())), S("key")).asBool());
     }
 
     // =========================================================================
@@ -1698,7 +1698,7 @@ class CollectionVerbTest {
 
     @Test
     void fillMissing_forward() {
-        var result = invoke("fillMissing", Arr(I(1), Null(), Null(), I(4)), S("forward"));
+        var result = invoke("fillMissing", Arr(I(1), Null(), Null(), I(4)), Null(), S("forward"));
         assertEquals(1, result.asArray().get(0).asInt64());
         assertEquals(1, result.asArray().get(1).asInt64());
         assertEquals(1, result.asArray().get(2).asInt64());
@@ -1707,7 +1707,7 @@ class CollectionVerbTest {
 
     @Test
     void fillMissing_backward() {
-        var result = invoke("fillMissing", Arr(Null(), Null(), I(3), I(4)), S("backward"));
+        var result = invoke("fillMissing", Arr(Null(), Null(), I(3), I(4)), Null(), S("backward"));
         assertEquals(3, result.asArray().get(0).asInt64());
         assertEquals(3, result.asArray().get(1).asInt64());
         assertEquals(3, result.asArray().get(2).asInt64());

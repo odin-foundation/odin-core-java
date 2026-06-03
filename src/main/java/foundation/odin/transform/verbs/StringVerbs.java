@@ -271,7 +271,7 @@ public final class StringVerbs {
             var word = parts[i];
             if (word.isEmpty()) continue;
             sb.append(Character.toUpperCase(word.charAt(0)));
-            if (word.length() > 1) sb.append(word.substring(1));
+            if (word.length() > 1) sb.append(word.substring(1).toLowerCase());
         }
         return DynValue.ofString(sb.toString());
     }
@@ -308,7 +308,7 @@ public final class StringVerbs {
             var regex = createRegex(toStr(args[1]));
             return DynValue.ofString(regex.matcher(s).replaceAll(toStr(args[2])));
         } catch (Exception e) {
-            return DynValue.ofString(s);
+            return DynValue.ofNull();
         }
     }
 
@@ -423,7 +423,8 @@ public final class StringVerbs {
         if (args[0].isNull()) return DynValue.ofNull();
         var s = toStr(args[0]);
         int count = toInt(args[1]);
-        if (count <= 0) return DynValue.ofString("");
+        if (count < 0) return DynValue.ofNull();
+        if (count == 0) return DynValue.ofString("");
         return DynValue.ofString(s.repeat(count));
     }
 
@@ -512,22 +513,14 @@ public final class StringVerbs {
     private static DynValue slugify(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
         if (args[0].isNull()) return DynValue.ofNull();
-        var s = removeAccents(toStr(args[0]).toLowerCase(Locale.ROOT));
-        var sb = new StringBuilder(s.length());
-        boolean lastWasHyphen = false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (Character.isLetterOrDigit(c)) {
-                sb.append(c);
-                lastWasHyphen = false;
-            } else if (!lastWasHyphen && sb.length() > 0) {
-                sb.append('-');
-                lastWasHyphen = true;
-            }
-        }
-        var result = sb.toString();
-        if (result.endsWith("-")) result = result.substring(0, result.length() - 1);
-        return DynValue.ofString(result);
+        var s = toStr(args[0]).toLowerCase(Locale.ROOT);
+        // Keep only ASCII word chars, whitespace, and hyphen (accents are dropped).
+        s = s.replaceAll("[^A-Za-z0-9_\\s-]", "");
+        // Whitespace and underscores become hyphens, then collapse and trim.
+        s = s.replaceAll("[\\s_]+", "-");
+        s = s.replaceAll("-+", "-");
+        s = s.replaceAll("^-+|-+$", "");
+        return DynValue.ofString(s);
     }
 
     private static DynValue match(DynValue[] args, VerbContext ctx) {
@@ -591,7 +584,7 @@ public final class StringVerbs {
         var s = toStr(args[0]);
         var delimiter = toStr(args[1]);
         int idx = s.indexOf(delimiter);
-        if (idx < 0) return DynValue.ofString(s);
+        if (idx < 0) return DynValue.ofString("");
         return DynValue.ofString(s.substring(idx + delimiter.length()));
     }
 
@@ -685,19 +678,17 @@ public final class StringVerbs {
         if (args[0].isNull()) return DynValue.ofArray(new ArrayList<>());
         var s = toStr(args[0]);
         var items = new ArrayList<DynValue>();
-        var current = new StringBuilder();
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (Character.isWhitespace(c)) {
-                if (current.length() > 0) {
-                    items.add(DynValue.ofString(current.toString()));
-                    current.setLength(0);
-                }
-            } else {
-                current.append(c);
+        String delim = args.length >= 2 ? toStr(args[1]) : "";
+        if (delim.isEmpty()) {
+            for (var tok : s.split("\\s+")) {
+                if (!tok.isEmpty()) items.add(DynValue.ofString(tok));
+            }
+        } else {
+            for (var tok : s.split(java.util.regex.Pattern.quote(delim), -1)) {
+                var t = tok.strip();
+                if (!t.isEmpty()) items.add(DynValue.ofString(t));
             }
         }
-        if (current.length() > 0) items.add(DynValue.ofString(current.toString()));
         return DynValue.ofArray(items);
     }
 

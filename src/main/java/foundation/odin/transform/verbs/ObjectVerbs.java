@@ -69,27 +69,27 @@ public final class ObjectVerbs {
     // ── Verb Implementations ──
 
     private static DynValue keys(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofArray(new ArrayList<>());
+        if (args.length == 0) return DynValue.ofNull();
         var obj = extractObj(args[0]);
-        if (obj == null) return DynValue.ofArray(new ArrayList<>());
+        if (obj == null) return DynValue.ofNull();
         var result = new ArrayList<DynValue>();
         for (var entry : obj) result.add(DynValue.ofString(entry.getKey()));
         return DynValue.ofArray(result);
     }
 
     private static DynValue values(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofArray(new ArrayList<>());
+        if (args.length == 0) return DynValue.ofNull();
         var obj = extractObj(args[0]);
-        if (obj == null) return DynValue.ofArray(new ArrayList<>());
+        if (obj == null) return DynValue.ofNull();
         var result = new ArrayList<DynValue>();
         for (var entry : obj) result.add(entry.getValue());
         return DynValue.ofArray(result);
     }
 
     private static DynValue entries(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofArray(new ArrayList<>());
+        if (args.length == 0) return DynValue.ofNull();
         var obj = extractObj(args[0]);
-        if (obj == null) return DynValue.ofArray(new ArrayList<>());
+        if (obj == null) return DynValue.ofNull();
         var result = new ArrayList<DynValue>();
         for (var entry : obj) {
             var pair = new ArrayList<DynValue>();
@@ -102,28 +102,36 @@ public final class ObjectVerbs {
 
     private static DynValue has(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofBool(false);
-        var obj = extractObj(args[0]);
-        if (obj == null) return DynValue.ofBool(false);
         String key = args[1].asString();
         if (key == null) return DynValue.ofBool(false);
-        for (var entry : obj) {
-            if (key.equals(entry.getKey())) return DynValue.ofBool(true);
-        }
-        return DynValue.ofBool(false);
+        return DynValue.ofBool(!resolvePath(args[0], key).isNull());
     }
 
     private static DynValue get(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
         String key = args[1].asString();
         if (key == null) return DynValue.ofNull();
-        DynValue result = args[0].get(key);
-        if (result != null) return result;
-        var obj = extractObj(args[0]);
-        if (obj == null) return DynValue.ofNull();
-        for (var entry : obj) {
-            if (key.equals(entry.getKey())) return entry.getValue();
-        }
+        DynValue result = resolvePath(args[0], key);
+        if (!result.isNull()) return result;
+        if (args.length >= 3) return args[2];
         return DynValue.ofNull();
+    }
+
+    // Resolve a dotted path against an object; null when any segment is absent.
+    private static DynValue resolvePath(DynValue root, String path) {
+        DynValue current = root;
+        for (var seg : path.split("\\.")) {
+            if (current == null) return DynValue.ofNull();
+            var obj = extractObj(current);
+            if (obj == null) return DynValue.ofNull();
+            DynValue next = null;
+            for (var entry : obj) {
+                if (seg.equals(entry.getKey())) { next = entry.getValue(); break; }
+            }
+            if (next == null) return DynValue.ofNull();
+            current = next;
+        }
+        return current != null ? current : DynValue.ofNull();
     }
 
     private static DynValue merge(DynValue[] args, VerbContext ctx) {

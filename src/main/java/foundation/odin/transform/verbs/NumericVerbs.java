@@ -73,9 +73,16 @@ public final class NumericVerbs {
         }
     }
 
+    private static double toNumber(DynValue v) {
+        Double d = toDouble(v);
+        return d != null ? d : 0.0;
+    }
+
     private static DynValue numericResult(double v) {
-        if (v % 1.0 == 0.0 && Math.abs(v) < (double) Long.MAX_VALUE)
-            return DynValue.ofInteger((long) v);
+        if (Double.isNaN(v) || Double.isInfinite(v)) return DynValue.ofFloat(v);
+        double rounded = Math.rint(v);
+        if (Math.abs(v - rounded) < 1e-10 && Math.abs(rounded) < (double) Long.MAX_VALUE)
+            return DynValue.ofInteger((long) rounded);
         return DynValue.ofFloat(v);
     }
 
@@ -95,7 +102,7 @@ public final class NumericVerbs {
         if (args.length < 1) return DynValue.ofNull();
         Double val = toDouble(args[0]);
         if (val == null) return DynValue.ofNull();
-        long intVal = (long) val.doubleValue();
+        long intVal = (long) Math.floor(val);
         return DynValue.ofString(Long.toString(intVal));
     }
 
@@ -113,16 +120,12 @@ public final class NumericVerbs {
 
     private static DynValue floor(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
-        Double val = toDouble(args[0]);
-        if (val == null) return DynValue.ofNull();
-        return numericResult(Math.floor(val));
+        return DynValue.ofInteger((long) Math.floor(toNumber(args[0])));
     }
 
     private static DynValue ceil(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
-        Double val = toDouble(args[0]);
-        if (val == null) return DynValue.ofNull();
-        return numericResult(Math.ceil(val));
+        return DynValue.ofInteger((long) Math.ceil(toNumber(args[0])));
     }
 
     private static DynValue negate(DynValue[] args, VerbContext ctx) {
@@ -361,10 +364,7 @@ public final class NumericVerbs {
 
     private static DynValue add(DynValue[] args, VerbContext ctx) {
         if (args.length < 2) return DynValue.ofNull();
-        Double a = toDouble(args[0]);
-        Double b = toDouble(args[1]);
-        if (a == null || b == null) return DynValue.ofNull();
-        return numericResult(a + b);
+        return numericResult(toNumber(args[0]) + toNumber(args[1]));
     }
 
     private static DynValue subtract(DynValue[] args, VerbContext ctx) {
@@ -394,30 +394,22 @@ public final class NumericVerbs {
 
     private static DynValue abs(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
-        Double val = toDouble(args[0]);
-        if (val == null) return DynValue.ofNull();
-        return numericResult(Math.abs(val));
+        return numericResult(Math.abs(toNumber(args[0])));
     }
 
     private static DynValue round(DynValue[] args, VerbContext ctx) {
         if (args.length < 1) return DynValue.ofNull();
-        Double val = toDouble(args[0]);
-        if (val == null) return DynValue.ofNull();
+        double val = toNumber(args[0]);
         int decimals = 0;
         if (args.length >= 2) {
             Double d = toDouble(args[1]);
             if (d != null) decimals = (int) d.doubleValue();
         }
         if (decimals < 0) decimals = 0;
-        double factor = Math.pow(10, decimals);
-        // AwayFromZero rounding: for positive use floor(x + 0.5), for negative use ceil(x - 0.5)
-        double scaled = val * factor;
-        double rounded;
-        if (scaled >= 0) {
-            rounded = Math.floor(scaled + 0.5) / factor;
-        } else {
-            rounded = Math.ceil(scaled - 0.5) / factor;
-        }
+        // Round half to even at the requested scale.
+        double rounded = java.math.BigDecimal.valueOf(val)
+                .setScale(decimals, java.math.RoundingMode.HALF_EVEN)
+                .doubleValue();
         return numericResult(rounded);
     }
 

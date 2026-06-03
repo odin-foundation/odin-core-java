@@ -613,7 +613,7 @@ class StringVerbExtendedTest {
     @Nested class RightOfTests {
 
         @Test void rightOf_noDelimiter() {
-            assertEquals("hello", invoke("rightOf", S("hello"), S("@")).asString());
+            assertEquals("", invoke("rightOf", S("hello"), S("@")).asString());
         }
 
         @Test void rightOf_atEnd() {
@@ -941,7 +941,7 @@ class StringVerbExtendedTest {
     @Nested class JsonEncodeDecodeTests {
 
         @Test void jsonEncode_roundtripString() {
-            assertEquals("\"hello\"", invoke("jsonEncode", S("hello")).asString());
+            assertEquals("hello", invoke("jsonEncode", S("hello")).asString());
         }
 
         @Test void jsonEncode_roundtripInteger() {
@@ -969,7 +969,7 @@ class StringVerbExtendedTest {
         }
 
         @Test void jsonDecode_string() {
-            assertEquals("hello", invoke("jsonDecode", S("\"hello\"")).asString());
+            assertEquals("hello", invoke("jsonDecode", S("hello")).asString());
         }
 
         @Test void jsonDecode_nullInput() {

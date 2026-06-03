@@ -56,7 +56,7 @@ class NumericVerbTest {
     @Test void formatNumber_MissingArgs() { assertTrue(invoke("formatNumber", F(1.0)).isNull()); }
 
     @Test void formatInteger_Basic() { assertEquals("3", invoke("formatInteger", F(3.7)).asString()); }
-    @Test void formatInteger_Negative() { assertEquals("-2", invoke("formatInteger", F(-2.3)).asString()); }
+    @Test void formatInteger_Negative() { assertEquals("-3", invoke("formatInteger", F(-2.3)).asString()); }
     @Test void formatInteger_FromInt() { assertEquals("42", invoke("formatInteger", I(42)).asString()); }
 
     @Test void formatCurrency_Basic() { assertEquals("1234.50", invoke("formatCurrency", F(1234.5)).asString()); }
@@ -148,7 +148,7 @@ class NumericVerbTest {
 
     @Test void round_Basic() { assertNumeric(invoke("round", F(3.7)), 4.0, 1e-10); }
     @Test void round_Down() { assertNumeric(invoke("round", F(3.2)), 3.0, 1e-10); }
-    @Test void round_Half() { assertNumeric(invoke("round", F(2.5)), 3.0, 1e-10); }
+    @Test void round_Half() { assertNumeric(invoke("round", F(2.5)), 2.0, 1e-10); }
     @Test void round_Negative() { assertNumeric(invoke("round", F(-2.7)), -3.0, 1e-10); }
     @Test void round_IntPassthrough() { assertNumeric(invoke("round", I(42)), 42.0, 1e-10); }
     @Test void round_WithPlaces() { assertNumeric(invoke("round", F(3.14159), I(2)), 3.14, 1e-10); }
@@ -218,7 +218,7 @@ class NumericVerbTest {
 
     @Test void log_Base2() { assertNumeric(invoke("log", F(8.0), F(2.0)), 3.0, 1e-10); }
     @Test void log_Base10() { assertNumeric(invoke("log", F(1000.0), F(10.0)), 3.0, 1e-10); }
-    @Test void log_Null() { assertTrue(invoke("log", F(8.0)).isNull()); }
+    @Test void log_Null() { assertNumeric(invoke("log", F(8.0)), Math.log(8.0), 1e-10); }
 
     @Test void ln_E() { assertNumeric(invoke("ln", F(Math.E)), 1.0, 1e-10); }
     @Test void ln_One() { assertNumeric(invoke("ln", F(1.0)), 0.0, 1e-10); }
@@ -737,9 +737,9 @@ class NumericVerbTest {
 
     @Test
     void daysBetweenDates_Absolute() {
-        // daysBetweenDates returns absolute difference
+        // daysBetweenDates returns the signed end-minus-start difference
         var result = invoke("daysBetweenDates", S("2024-01-11"), S("2024-01-01"));
-        assertEquals(10L, result.asInt64());
+        assertEquals(-10L, result.asInt64());
     }
 
     // =========================================================================

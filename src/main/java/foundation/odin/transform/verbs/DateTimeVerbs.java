@@ -416,10 +416,8 @@ public final class DateTimeVerbs {
         LocalDateTime dt = parseDt(s);
         if (dt == null) return DynValue.ofNull();
 
-        // Output numbering: Sunday=0, Monday=1, ..., Saturday=6
-        int dow = dt.getDayOfWeek().getValue(); // 1=Mon..7=Sun
-        int dotNetDow = dow == 7 ? 0 : dow; // Convert to 0=Sun, 1=Mon, ..., 6=Sat
-        return DynValue.ofInteger(dotNetDow);
+        // ISO numbering: Monday=1 .. Sunday=7
+        return DynValue.ofInteger(dt.getDayOfWeek().getValue());
     }
 
     private static DynValue weekOfYear(DynValue[] args, VerbContext ctx) {
@@ -430,12 +428,8 @@ public final class DateTimeVerbs {
         LocalDateTime dt = parseDt(s);
         if (dt == null) return DynValue.ofNull();
 
-        // Week of year (first four-day week, Monday start):
-        // count weeks within the calendar year (never week 1 of next year),
-        // so use weekOfYear() which caps at 52/53 rather than weekOfWeekBasedYear()
-        // which can return 1 for late-December dates belonging to next year's ISO week 1.
-        WeekFields wf = WeekFields.of(DayOfWeek.MONDAY, 4);
-        int week = dt.get(wf.weekOfYear());
+        // ISO 8601 week number, anchored on the Thursday of each week.
+        int week = dt.get(WeekFields.ISO.weekOfWeekBasedYear());
         return DynValue.ofInteger(week);
     }
 
@@ -535,7 +529,7 @@ public final class DateTimeVerbs {
         if (s1 == null || s2 == null) return DynValue.ofNull();
 
         Long diff = DateUtils.dateDiffDays(s1, s2);
-        return diff != null ? DynValue.ofInteger(Math.abs(diff)) : DynValue.ofNull();
+        return diff != null ? DynValue.ofInteger(diff) : DynValue.ofNull();
     }
 
     private static DynValue ageFromDate(DynValue[] args, VerbContext ctx) {
@@ -568,13 +562,43 @@ public final class DateTimeVerbs {
 
     private static DynValue isValidDate(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofBool(false);
-        String s = extractDateStr(args[0]);
-        if (s == null) return DynValue.ofBool(false);
+        String s = VerbHelpers.coerceStr(args[0]);
+        if (s.isEmpty()) return DynValue.ofBool(false);
 
-        var parsed = DateUtils.parseDate(s);
-        if (parsed == null) return DynValue.ofBool(false);
+        var iso = DateUtils.parseDate(s);
+        if (iso != null && DateUtils.isValidDate(iso.year(), iso.month(), iso.day()))
+            return DynValue.ofBool(true);
 
-        return DynValue.ofBool(DateUtils.isValidDate(parsed.year(), parsed.month(), parsed.day()));
+        if (args.length >= 2) {
+            String pattern = VerbHelpers.coerceStr(args[1]);
+            return DynValue.ofBool(parseWithPattern(s, pattern) != null);
+        }
+        return DynValue.ofBool(false);
+    }
+
+    // Parse a date by positional tokens (YYYY/MM/DD/HH/mm/ss); null if invalid.
+    private static LocalDateTime parseWithPattern(String s, String pattern) {
+        try {
+            int yp = pattern.indexOf("YYYY");
+            int mp = pattern.indexOf("MM");
+            int dp = pattern.indexOf("DD");
+            int hp = pattern.indexOf("HH");
+            int minp = pattern.indexOf("mm");
+            int sp = pattern.indexOf("ss");
+            int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+            if (yp >= 0 && yp + 4 <= s.length()) year = Integer.parseInt(s.substring(yp, yp + 4));
+            if (mp >= 0 && mp + 2 <= s.length()) month = Integer.parseInt(s.substring(mp, mp + 2));
+            if (dp >= 0 && dp + 2 <= s.length()) day = Integer.parseInt(s.substring(dp, dp + 2));
+            if (hp >= 0 && hp + 2 <= s.length()) hour = Integer.parseInt(s.substring(hp, hp + 2));
+            if (minp >= 0 && minp + 2 <= s.length()) minute = Integer.parseInt(s.substring(minp, minp + 2));
+            if (sp >= 0 && sp + 2 <= s.length()) second = Integer.parseInt(s.substring(sp, sp + 2));
+            if (year == 0 && month == 0 && day == 0) return null;
+            if (month == 0) month = 1;
+            if (day == 0) day = 1;
+            return LocalDateTime.of(year, month, day, hour, minute, second);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static DynValue formatLocaleDate(DynValue[] args, VerbContext ctx) {

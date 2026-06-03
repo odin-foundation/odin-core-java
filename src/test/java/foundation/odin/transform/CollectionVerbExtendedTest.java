@@ -503,7 +503,7 @@ class CollectionVerbExtendedTest {
     @Test
     void zip_unequalLengthPadsWithNull() {
         var result = invoke("zip", Arr(I(1), I(2), I(3)), Arr(S("a")));
-        assertArrayLength(result, 3);
+        assertArrayLength(result, 1);
         var arr = result.asArray();
         assertEquals(Arr(I(1), S("a")), arr.get(0));
     }
@@ -1103,13 +1103,13 @@ class CollectionVerbExtendedTest {
 
     @Test
     void fillMissing_forwardStrategy() {
-        var result = invoke("fillMissing", Arr(I(1), Null(), Null(), I(4), Null()), S("forward"));
+        var result = invoke("fillMissing", Arr(I(1), Null(), Null(), I(4), Null()), Null(), S("forward"));
         assertEquals(Arr(I(1), I(1), I(1), I(4), I(4)), result);
     }
 
     @Test
     void fillMissing_backwardStrategy() {
-        var result = invoke("fillMissing", Arr(Null(), Null(), I(3), Null(), I(5)), S("backward"));
+        var result = invoke("fillMissing", Arr(Null(), Null(), I(3), Null(), I(5)), Null(), S("backward"));
         assertEquals(Arr(I(3), I(3), I(3), I(5), I(5)), result);
     }
 
@@ -1257,7 +1257,7 @@ class CollectionVerbExtendedTest {
 
     @Test
     void has_withNullValue() {
-        assertEquals(B(true), invoke("has", Obj(e("key", Null())), S("key")));
+        assertEquals(B(false), invoke("has", Obj(e("key", Null())), S("key")));
     }
 
     @Test

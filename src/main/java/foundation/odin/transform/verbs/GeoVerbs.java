@@ -110,6 +110,7 @@ public final class GeoVerbs {
         Double lat1 = toDouble(args[0]), lon1 = toDouble(args[1]);
         Double lat2 = toDouble(args[2]), lon2 = toDouble(args[3]);
         if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return DynValue.ofNull();
+        if (!validCoord(lat1, lon1) || !validCoord(lat2, lon2)) return DynValue.ofNull();
 
         double lat1Rad = lat1 * DEG_TO_RAD;
         double lat2Rad = lat2 * DEG_TO_RAD;
@@ -119,7 +120,7 @@ public final class GeoVerbs {
         double x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
         double b = Math.atan2(y, x) * RAD_TO_DEG;
         b = (b + 360.0) % 360.0;
-        return numericResult(b);
+        return DynValue.ofFloat(b);
     }
 
     private static DynValue midpoint(DynValue[] args, VerbContext ctx) {
@@ -127,6 +128,7 @@ public final class GeoVerbs {
         Double lat1 = toDouble(args[0]), lon1 = toDouble(args[1]);
         Double lat2 = toDouble(args[2]), lon2 = toDouble(args[3]);
         if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return DynValue.ofNull();
+        if (!validCoord(lat1, lon1) || !validCoord(lat2, lon2)) return DynValue.ofNull();
 
         double lat1Rad = lat1 * DEG_TO_RAD;
         double lon1Rad = lon1 * DEG_TO_RAD;
@@ -146,5 +148,9 @@ public final class GeoVerbs {
         entries.add(Map.entry("lat", DynValue.ofFloat(midLat * RAD_TO_DEG)));
         entries.add(Map.entry("lon", DynValue.ofFloat(midLon * RAD_TO_DEG)));
         return DynValue.ofObject(entries);
+    }
+
+    private static boolean validCoord(double lat, double lon) {
+        return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
     }
 }

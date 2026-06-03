@@ -215,12 +215,8 @@ public final class LogicVerbs {
 
     private static DynValue isDate(DynValue[] args, VerbContext ctx) {
         if (args.length == 0) return DynValue.ofBool(false);
-        if (args[0].getType() == DynValue.Type.Date) return DynValue.ofBool(true);
-        if (args[0].getType() == DynValue.Type.String) {
-            var s = args[0].asString();
-            return DynValue.ofBool(s.length() >= 10 && CoercionVerbs.isValidDatePrefix(s));
-        }
-        return DynValue.ofBool(false);
+        var t = args[0].getType();
+        return DynValue.ofBool(t == DynValue.Type.Date || t == DynValue.Type.Timestamp);
     }
 
     // ── Type Inspection ──
@@ -292,21 +288,12 @@ public final class LogicVerbs {
     }
 
     private static DynValue isNaN(DynValue[] args, VerbContext ctx) {
-        if (args.length == 0) return DynValue.ofBool(true);
+        if (args.length == 0) return DynValue.ofBool(false);
         var val = args[0];
         if (val.getType() == DynValue.Type.Float) {
             return DynValue.ofBool(Double.isNaN(val.asDouble()));
         }
-        if (val.getType() == DynValue.Type.Integer) return DynValue.ofBool(false);
-        if (val.getType() == DynValue.Type.String) {
-            try {
-                Double.parseDouble(val.asString());
-                return DynValue.ofBool(false);
-            } catch (NumberFormatException e) {
-                return DynValue.ofBool(true);
-            }
-        }
-        return DynValue.ofBool(true);
+        return DynValue.ofBool(false);
     }
 
     // ── Helpers ──

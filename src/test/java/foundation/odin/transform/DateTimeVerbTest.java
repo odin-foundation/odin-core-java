@@ -418,7 +418,7 @@ class DateTimeVerbTest {
     @Test
     void dayOfWeek_Sunday() {
         // 2024-01-07 is Sunday
-        assertEquals(0L, invoke("dayOfWeek", D("2024-01-07")).asInt64()); // Sunday = 0
+        assertEquals(7L, invoke("dayOfWeek", D("2024-01-07")).asInt64()); // ISO Sunday = 7
     }
 
     @Test
@@ -633,7 +633,7 @@ class DateTimeVerbTest {
 
     @Test
     void daysBetweenDates_ReversedIsAbsolute() {
-        assertEquals(10L, invoke("daysBetweenDates", D("2024-01-11"), D("2024-01-01")).asInt64());
+        assertEquals(-10L, invoke("daysBetweenDates", D("2024-01-11"), D("2024-01-01")).asInt64());
     }
 
     @Test

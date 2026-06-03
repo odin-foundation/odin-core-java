@@ -482,8 +482,8 @@ class NumericVerbExtendedTest {
     // =========================================================================
 
     @Test void formatNumber_NullInput() { assertTrue(invoke("formatNumber", Null(), I(2)).isNull()); }
-    @Test void floor_NullInput() { assertTrue(invoke("floor", Null()).isNull()); }
-    @Test void ceil_NullInput() { assertTrue(invoke("ceil", Null()).isNull()); }
+    @Test void floor_NullInput() { assertNumeric(invoke("floor", Null()), 0.0, 1e-10); }
+    @Test void ceil_NullInput() { assertNumeric(invoke("ceil", Null()), 0.0, 1e-10); }
 
     // =========================================================================
     // 20. DATETIME: FORMAT_DATE / FORMAT_TIME
@@ -587,7 +587,7 @@ class NumericVerbExtendedTest {
         assertNumeric(invoke("dayOfWeek", S("2024-01-01")), 1.0, 1e-10);
     }
 
-    @Test void dayOfWeek_Sunday() { assertNumeric(invoke("dayOfWeek", S("2024-01-07")), 0.0, 1e-10); }
+    @Test void dayOfWeek_Sunday() { assertNumeric(invoke("dayOfWeek", S("2024-01-07")), 7.0, 1e-10); }
     @Test void dayOfWeek_Saturday() { assertNumeric(invoke("dayOfWeek", S("2024-01-06")), 6.0, 1e-10); }
     @Test void dayOfWeek_InvalidDate() { assertTrue(invoke("dayOfWeek", S("invalid")).isNull()); }
 
@@ -644,7 +644,7 @@ class NumericVerbExtendedTest {
 
     @Test void daysBetween_SameDate() { assertNumeric(invoke("daysBetweenDates", S("2024-06-15"), S("2024-06-15")), 0.0, 1e-10); }
     @Test void daysBetween_OneDay() { assertNumeric(invoke("daysBetweenDates", S("2024-06-15"), S("2024-06-16")), 1.0, 1e-10); }
-    @Test void daysBetween_ReversedOrder() { assertNumeric(invoke("daysBetweenDates", S("2024-06-16"), S("2024-06-15")), 1.0, 1e-10); }
+    @Test void daysBetween_ReversedOrder() { assertNumeric(invoke("daysBetweenDates", S("2024-06-16"), S("2024-06-15")), -1.0, 1e-10); }
     @Test void daysBetween_LeapYear() { assertNumeric(invoke("daysBetweenDates", S("2024-02-28"), S("2024-03-01")), 2.0, 1e-10); }
     @Test void daysBetween_NonLeapYear() { assertNumeric(invoke("daysBetweenDates", S("2023-02-28"), S("2023-03-01")), 1.0, 1e-10); }
     @Test void daysBetween_YearBoundary() { assertNumeric(invoke("daysBetweenDates", S("2023-12-31"), S("2024-01-01")), 1.0, 1e-10); }
