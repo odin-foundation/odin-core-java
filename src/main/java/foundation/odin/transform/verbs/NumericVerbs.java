@@ -427,7 +427,7 @@ public final class NumericVerbs {
     private static final java.util.Set<String> TEMP_UNITS = java.util.Set.of("C", "F", "K");
 
     private static final Map<String, Map<String, Double>> UNIT_FAMILIES = Map.ofEntries(
-            Map.entry("mass", Map.of("kg", 1.0, "g", 0.001, "mg", 0.000001, "lb", 0.453592, "oz", 0.0283495, "ton", 907.185, "tonne", 1000.0)),
+            Map.entry("mass", Map.of("kg", 1.0, "g", 0.001, "mg", 0.000001, "lb", 0.45359237, "oz", 0.0283495, "ton", 907.185, "tonne", 1000.0)),
             Map.entry("length", Map.of("m", 1.0, "km", 1000.0, "cm", 0.01, "mm", 0.001, "mi", 1609.344, "ft", 0.3048, "in", 0.0254, "yd", 0.9144)),
             Map.entry("volume", Map.of("L", 1.0, "mL", 0.001, "gal", 3.78541, "qt", 0.946353, "pt", 0.473176, "cup", 0.236588, "floz", 0.0295735)),
             Map.entry("speed", Map.of("mps", 1.0, "kph", 0.277778, "mph", 0.44704)),
