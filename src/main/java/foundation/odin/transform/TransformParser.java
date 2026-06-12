@@ -950,6 +950,9 @@ public final class TransformParser {
 
                 var refDirectives = new ArrayList<OdinDirective>();
                 while (pos < argsStr.length() && argsStr.charAt(pos) == ':') {
+                    // Field modifiers belong to the mapping, not the argument; leave
+                    // them for the value/assignment level to attach.
+                    if (isFieldModifierDirective(argsStr, pos)) break;
                     var result = parseExtractionDirective(argsStr.substring(pos));
                     if (result.dir != null) {
                         refDirectives.add(result.dir);
@@ -1033,6 +1036,19 @@ public final class TransformParser {
     private static String extractPathToken(String s) {
         int end = findTokenEnd(s, 0);
         return s.substring(0, end);
+    }
+
+    // Field/value modifiers attach to the mapping, not to a verb argument, so
+    // argument directive parsing stops at them and lets them bubble up.
+    private static boolean isFieldModifierDirective(String s, int pos) {
+        int nameStart = pos + 1;
+        int nameEnd = nameStart;
+        while (nameEnd < s.length() && !Character.isWhitespace(s.charAt(nameEnd))) nameEnd++;
+        var name = s.substring(nameStart, nameEnd);
+        return switch (name) {
+            case "attr", "required", "confidential", "deprecated", "redacted", "critical" -> true;
+            default -> false;
+        };
     }
 
     private record ParsedDirective(OdinDirective dir, int consumed) {}

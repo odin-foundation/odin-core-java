@@ -26,16 +26,26 @@ public final class OdinSchema {
 
     // ── Schema Types ──
 
-    public record SchemaType(String name, String description, List<SchemaField> fields, List<String> parents) {
+    public record SchemaType(String name, String description, List<SchemaField> fields, List<String> parents,
+            Map<String, SchemaArray> arrays) {
         public SchemaType(String name, List<SchemaField> fields) {
-            this(name, null, fields, List.of());
+            this(name, null, fields, List.of(), new LinkedHashMap<>());
+        }
+
+        public SchemaType(String name, String description, List<SchemaField> fields, List<String> parents) {
+            this(name, description, fields, parents, new LinkedHashMap<>());
         }
     }
 
     public record SchemaArray(String name, SchemaFieldType itemType, Long minItems, Long maxItems,
-            List<String> columns, Map<String, SchemaField> itemFields) {
+            List<String> columns, Map<String, SchemaField> itemFields, String itemTypeRef) {
         public SchemaArray(String name, SchemaFieldType itemType, Long minItems, Long maxItems) {
-            this(name, itemType, minItems, maxItems, List.of(), new LinkedHashMap<>());
+            this(name, itemType, minItems, maxItems, List.of(), new LinkedHashMap<>(), null);
+        }
+
+        public SchemaArray(String name, SchemaFieldType itemType, Long minItems, Long maxItems,
+                List<String> columns, Map<String, SchemaField> itemFields) {
+            this(name, itemType, minItems, maxItems, columns, itemFields, null);
         }
     }
 

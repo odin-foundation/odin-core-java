@@ -206,11 +206,19 @@ public final class SchemaParser {
                 String headerPrefix = currentHeader != null ? currentHeader : "";
                 boolean isTypeDefinition = headerPrefix.startsWith("@") || headerPrefix.startsWith("{@");
                 if (isTypeDefinition) {
+                    String typeName = headerPrefix.startsWith("@") ? headerPrefix.substring(1) : headerPrefix;
+                    var typeEntry = types.get(typeName);
+
+                    // Array-of-object entry: arr[] = @type (reference) or arr[].field (inline).
+                    // These live in the type's arrays map so entries are validated per element.
+                    String arrField = currentTypeSubPath.isEmpty() ? fieldName : currentTypeSubPath + "." + fieldName;
+                    if (typeEntry != null && collectTypeArray(typeEntry.arrays(), arrField, valueSpec)) {
+                        continue;
+                    }
+
                     // Prefix the field key with the relative sub-path inside {.sub} sections.
                     String typeFieldName = currentTypeSubPath.isEmpty() ? cleanFieldName : currentTypeSubPath + "." + cleanFieldName;
                     var field = parseFieldSpec(typeFieldName, valueSpec);
-                    String typeName = headerPrefix.startsWith("@") ? headerPrefix.substring(1) : headerPrefix;
-                    var typeEntry = types.get(typeName);
                     if (typeEntry != null) {
                         typeEntry.fields().add(field);
                     }
@@ -234,6 +242,38 @@ public final class SchemaParser {
 
         metadata = new OdinSchema.SchemaMetadata(metaId, metaTitle, metaDescription, metaVersion);
         return new OdinSchema.SchemaDefinition(metadata, imports, types, fields, arrays, objectConstraints);
+    }
+
+    // Pull an array-of-object entry field out of a type body into the type's arrays map.
+    // `arr[]` (value is a type reference) sets the array's item type ref; `arr[].field`
+    // contributes one entry field. Returns true when the field name is such an entry.
+    private static boolean collectTypeArray(Map<String, OdinSchema.SchemaArray> arrays,
+            String fieldName, String valueSpec) {
+        int br = fieldName.indexOf("[]");
+        if (br < 0) return false;
+
+        String arrName = fieldName.substring(0, br);
+        String itemPath = fieldName.length() > br + 2 && fieldName.charAt(br + 2) == '.'
+                ? fieldName.substring(br + 3) : null;
+
+        var arr = arrays.get(arrName);
+        if (arr == null) {
+            arr = new OdinSchema.SchemaArray(arrName, new OdinSchema.SchemaFieldType.StringType(), null, null);
+            arrays.put(arrName, arr);
+        }
+
+        if (itemPath == null) {
+            // arr[] = @type: item fields come from the referenced type, resolved at validation.
+            var field = parseFieldSpec(arrName, valueSpec);
+            if (field.fieldType() instanceof OdinSchema.SchemaFieldType.TypeRefType ref) {
+                arrays.put(arrName, new OdinSchema.SchemaArray(arr.name(), arr.itemType(),
+                        arr.minItems(), arr.maxItems(), arr.columns(), arr.itemFields(), ref.name()));
+            }
+        } else {
+            // arr[].itemPath = field: contribute one entry field.
+            arr.itemFields().put(itemPath, parseFieldSpec(itemPath, valueSpec));
+        }
+        return true;
     }
 
     private static int findAssignmentEquals(String line) {

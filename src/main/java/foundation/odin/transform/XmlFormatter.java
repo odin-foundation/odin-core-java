@@ -62,6 +62,33 @@ public final class XmlFormatter {
                         writeArrayItemElement(sb, key, item, indent, 0, modifiers, key, emitTypeHints, namespaces);
                     }
                 }
+            } else if (child.getType() == DynValue.Type.Object) {
+                // Separate :attr children (rendered on the element) from child elements.
+                var attrFields = new java.util.ArrayList<Map.Entry<String, DynValue>>();
+                var childFields = new java.util.ArrayList<Map.Entry<String, DynValue>>();
+                var children = child.asObject();
+                if (children != null) {
+                    for (var ce : children) {
+                        var mods = modifiers.get(key + "." + ce.getKey());
+                        if (mods != null && mods.isAttr()) attrFields.add(ce);
+                        else childFields.add(ce);
+                    }
+                }
+
+                sb.append('<').append(key);
+                if (needsNamespace) sb.append(" xmlns:odin=\"https://odin.foundation/ns\"");
+                sb.append(buildNamespaceDeclarations(namespaces));
+                for (var attr : attrFields) {
+                    sb.append(' ').append(attr.getKey()).append("=\"");
+                    sb.append(xmlEscape(scalarToString(attr.getValue())));
+                    sb.append('"');
+                }
+                sb.append(">\n");
+                for (var ce : childFields) {
+                    writeElement(sb, ce.getKey(), ce.getValue(), indent, 1,
+                            modifiers, key + "." + ce.getKey(), true, emitTypeHints, namespaces);
+                }
+                sb.append("</").append(key).append(">\n");
             } else {
                 sb.append('<').append(key);
                 if (needsNamespace) sb.append(" xmlns:odin=\"https://odin.foundation/ns\"");

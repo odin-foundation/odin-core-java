@@ -744,10 +744,61 @@ public final class ValidationEngine {
                     String fullPath = path + "." + typeField.name();
                     result.putIfAbsent(fullPath, renamed(typeField, fullPath));
                 }
+                expandTypeArrays(doc, schema, registry, type, path, result);
             }
         }
 
         return result != null ? result : baseFields;
+    }
+
+    // Expand a present type's array-of-object entries under each present index, so
+    // entry-level required markers fire only when the entry is present and report at
+    // the indexed path (e.g. agency.producers[0].code). Absent arrays add nothing.
+    private static void expandTypeArrays(OdinDocument doc, OdinSchema.SchemaDefinition schema,
+            TypeRegistry registry, OdinSchema.SchemaType type, String path,
+            Map<String, OdinSchema.SchemaField> result) {
+        if (type.arrays().isEmpty()) return;
+
+        for (var arrEntry : type.arrays().entrySet()) {
+            var arr = arrEntry.getValue();
+            String arrayPath = path + "." + arrEntry.getKey();
+            var itemFields = resolveArrayItemFields(schema, registry, arr);
+            if (itemFields.isEmpty()) continue;
+
+            for (int idx : presentArrayIndices(doc, arrayPath)) {
+                for (var itemField : itemFields) {
+                    if ("_composition".equals(itemField.name())) continue;
+                    String fullPath = arrayPath + "[" + idx + "]." + itemField.name();
+                    result.putIfAbsent(fullPath, renamed(itemField, fullPath));
+                }
+            }
+        }
+    }
+
+    // Resolve an array's entry fields: inline item fields, else the referenced type's fields.
+    private static List<OdinSchema.SchemaField> resolveArrayItemFields(
+            OdinSchema.SchemaDefinition schema, TypeRegistry registry, OdinSchema.SchemaArray arr) {
+        if (!arr.itemFields().isEmpty()) return new ArrayList<>(arr.itemFields().values());
+        if (arr.itemTypeRef() != null) {
+            var t = lookupType(schema, registry, arr.itemTypeRef());
+            if (t != null) return t.fields();
+        }
+        return List.of();
+    }
+
+    // Distinct array indices present in the document under the given array path.
+    private static List<Integer> presentArrayIndices(OdinDocument doc, String arrayPath) {
+        var seen = new TreeSet<Integer>();
+        String prefix = arrayPath + "[";
+        for (var key : doc.getAssignments().keys()) {
+            if (!key.startsWith(prefix)) continue;
+            int close = key.indexOf(']', prefix.length());
+            if (close < 0) continue;
+            try {
+                seen.add(Integer.parseInt(key.substring(prefix.length(), close)));
+            } catch (NumberFormatException ignored) {}
+        }
+        return new ArrayList<>(seen);
     }
 
     private static void mergeTypeFields(Map<String, OdinSchema.SchemaField> result,
