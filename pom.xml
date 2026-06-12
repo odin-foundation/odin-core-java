@@ -137,7 +137,10 @@
                 <configuration>
                     <publishingServerId>central</publishingServerId>
                     <autoPublish>true</autoPublish>
-                    <waitUntil>published</waitUntil>
+                    <!-- Wait only for validation; autoPublish completes the publish
+                         asynchronously. Waiting for "published" polls through slow
+                         Central propagation and times the job out. -->
+                    <waitUntil>validated</waitUntil>
                 </configuration>
             </plugin>
         </plugins>
