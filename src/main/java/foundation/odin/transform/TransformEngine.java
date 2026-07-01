@@ -277,9 +277,21 @@ public final class TransformEngine {
 
     public static final class TransformOptions {
         private ImportResolver importResolver;
+        private Integer maxTransformFuel;   // per-call fuel budget; null falls back to the global limit
+        private Integer transformTimeoutMs; // per-call wall-clock timeout in ms; null falls back to the global limit
+        private Integer maxExpressionDepth; // per-call expression-depth cap; null falls back to the global limit
 
         public ImportResolver getImportResolver() { return importResolver; }
         public TransformOptions setImportResolver(ImportResolver r) { this.importResolver = r; return this; }
+
+        public Integer getMaxTransformFuel() { return maxTransformFuel; }
+        public TransformOptions setMaxTransformFuel(Integer v) { this.maxTransformFuel = v; return this; }
+
+        public Integer getTransformTimeoutMs() { return transformTimeoutMs; }
+        public TransformOptions setTransformTimeoutMs(Integer v) { this.transformTimeoutMs = v; return this; }
+
+        public Integer getMaxExpressionDepth() { return maxExpressionDepth; }
+        public TransformOptions setMaxExpressionDepth(Integer v) { this.maxExpressionDepth = v; return this; }
     }
 
     // Merge imported lookup tables, constants, accumulators, and named segments into
@@ -321,10 +333,15 @@ public final class TransformEngine {
         if (options != null && options.getImportResolver() != null && !transform.getImports().isEmpty()) {
             resolveImports(transform, options.getImportResolver());
         }
-        return execute(transform, source);
+        return executeInternal(transform, source, options);
     }
 
     public static TransformResult execute(OdinTransform transform, DynValue source) {
+        return executeInternal(transform, source, null);
+    }
+
+    private static TransformResult executeInternal(OdinTransform transform, DynValue source,
+            TransformOptions options) {
         // Check for multi-record mode (discriminator dispatch)
         if (transform.getSource() != null) {
             String discConfig = null;
@@ -341,7 +358,7 @@ public final class TransformEngine {
                 discConfig = transform.getSource().getOptions().get("discriminator");
             }
             if (discConfig != null && source.getType() == DynValue.Type.String) {
-                return executeMultiRecord(transform, source.asString(), discConfig, transform.getSource().getFormat());
+                return executeMultiRecord(transform, source.asString(), discConfig, transform.getSource().getFormat(), options);
             }
         }
 
@@ -356,11 +373,11 @@ public final class TransformEngine {
             }
             if (srcFmt != null) {
                 var parsed = parseSourceFormat(source.asString(), srcFmt);
-                if (parsed != null) return execute(transform, parsed);
+                if (parsed != null) return executeInternal(transform, parsed, options);
             }
         }
 
-        var ctx = buildContext(transform, source);
+        var ctx = buildContext(transform, source, options);
         var output = DynValue.ofObject(new ArrayList<>());
 
         var segments = orderSegmentsByPass(transform.getSegments());
@@ -511,7 +528,7 @@ public final class TransformEngine {
         return DynValue.ofObject(entries);
     }
 
-    private static TransformResult executeMultiRecord(OdinTransform transform, String rawInput, String discConfig, String sourceFormat) {
+    private static TransformResult executeMultiRecord(OdinTransform transform, String rawInput, String discConfig, String sourceFormat, TransformOptions options) {
         var parsed = parseDiscriminatorConfig(discConfig);
         if (parsed == null) {
             var result = new TransformResult();
@@ -554,7 +571,7 @@ public final class TransformEngine {
             }
         }
 
-        var ctx = buildContext(transform, DynValue.ofNull());
+        var ctx = buildContext(transform, DynValue.ofNull(), options);
         ctx.sourceFormat = sourceFormat;
 
         var output = DynValue.ofObject(new ArrayList<>());
@@ -675,7 +692,7 @@ public final class TransformEngine {
 
     // ── Context Setup ──
 
-    private static ExecContext buildContext(OdinTransform transform, DynValue source) {
+    private static ExecContext buildContext(OdinTransform transform, DynValue source, TransformOptions options) {
         var ctx = new ExecContext();
         ctx.source = source != null ? source : DynValue.ofNull();
         ctx.constants = new LinkedHashMap<>();
@@ -698,9 +715,13 @@ public final class TransformEngine {
         ctx.strictTypes = transform.isStrictTypes();
         ctx.targetFormat = transform.getTarget() != null ? transform.getTarget().getFormat() : null;
         ctx.targetOptions = targetOpts;
-        ctx.fuelCap = SecurityLimits.MAX_TRANSFORM_FUEL;
-        ctx.timeoutMs = SecurityLimits.TRANSFORM_TIMEOUT_MS;
-        ctx.maxExprDepth = SecurityLimits.MAX_EXPRESSION_DEPTH;
+        // A per-call option overrides the global limit; unset falls back to it.
+        ctx.fuelCap = options != null && options.getMaxTransformFuel() != null
+                ? options.getMaxTransformFuel() : SecurityLimits.MAX_TRANSFORM_FUEL;
+        ctx.timeoutMs = options != null && options.getTransformTimeoutMs() != null
+                ? options.getTransformTimeoutMs() : SecurityLimits.TRANSFORM_TIMEOUT_MS;
+        ctx.maxExprDepth = options != null && options.getMaxExpressionDepth() != null
+                ? options.getMaxExpressionDepth() : SecurityLimits.MAX_EXPRESSION_DEPTH;
         if (ctx.timeoutMs > 0) ctx.startTime = clock.getAsLong();
         return ctx;
     }

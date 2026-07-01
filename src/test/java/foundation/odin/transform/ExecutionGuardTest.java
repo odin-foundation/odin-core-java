@@ -50,6 +50,10 @@ class ExecutionGuardTest {
         return TransformEngine.execute(TransformParser.parse(head + body), source);
     }
 
+    private static TransformResult run(String body, DynValue source, TransformEngine.TransformOptions opts) {
+        return TransformEngine.execute(TransformParser.parse(HEADER + body), source, opts);
+    }
+
     // Object source binding `big` to a descending integer array of the given length.
     private static DynValue bigArray(int length) {
         var items = new ArrayList<DynValue>(length);
@@ -145,6 +149,52 @@ class ExecutionGuardTest {
             var r = run(nestAbs(200));
             assertFalse(r.isSuccess());
             assertTrue(hasErrorCode(r, "T018"));
+        }
+    }
+
+    @Nested
+    class PerCallOverrides {
+        @Test
+        void perCallFuelBudgetAbortsWithNoGlobalLimit() {
+            SecurityLimits.MAX_TRANSFORM_FUEL = 0;
+            var opts = new TransformEngine.TransformOptions().setMaxTransformFuel(50);
+            var r = run("{out}\nr = %sort @big", bigArray(200), opts);
+            assertFalse(r.isSuccess());
+            assertTrue(hasErrorCode(r, "T016"));
+        }
+
+        @Test
+        void perCallFuelOverridesGlobalLimit() {
+            SecurityLimits.MAX_TRANSFORM_FUEL = 50;
+            var opts = new TransformEngine.TransformOptions().setMaxTransformFuel(1_000_000);
+            var r = run("{out}\nr = %sort @big", bigArray(200), opts);
+            assertTrue(r.isSuccess(), () -> "errors: " + r.getErrors());
+        }
+
+        @Test
+        void perCallZeroOptsOutOfGlobalFuelCap() {
+            SecurityLimits.MAX_TRANSFORM_FUEL = 50;
+            var opts = new TransformEngine.TransformOptions().setMaxTransformFuel(0);
+            var r = run("{out}\nr = %sort @big", bigArray(200), opts);
+            assertTrue(r.isSuccess(), () -> "errors: " + r.getErrors());
+        }
+
+        @Test
+        void perCallExpressionDepthCapYieldsDepthError() {
+            var opts = new TransformEngine.TransformOptions().setMaxExpressionDepth(8);
+            var r = run(nestAbs(30), DynValue.ofNull(), opts);
+            assertFalse(r.isSuccess());
+            assertTrue(hasErrorCode(r, "T018"));
+        }
+
+        @Test
+        void perCallTimeoutYieldsTimeoutError() {
+            long[] clock = {0};
+            TransformEngine.clock = () -> (clock[0] += 10_000);
+            var opts = new TransformEngine.TransformOptions().setTransformTimeoutMs(100);
+            var r = run("{out}\nr = %sort @big", bigArray(2000), opts);
+            assertFalse(r.isSuccess());
+            assertTrue(hasErrorCode(r, "T017"));
         }
     }
 
