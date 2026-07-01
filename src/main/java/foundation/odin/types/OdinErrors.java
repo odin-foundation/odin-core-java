@@ -296,7 +296,7 @@ public final class OdinErrors {
         }
     }
 
-    // ── Transform error codes (T001-T011) ──
+    // ── Transform error codes (T001-T018) ──
 
     public static final class TransformErrorCodes {
         public static final String T001_UNKNOWN_VERB = "T001";
@@ -313,8 +313,36 @@ public final class OdinErrors {
         public static final String T012_DANGLING_BRANCH = "T012";
         public static final String T013_VALIDATION_FAILED = "T013";
         public static final String T014_NESTED_INTERPOLATION = "T014";
+        public static final String T015_INVALID_EXPRESSION = "T015";
+        public static final String T016_TRANSFORM_BUDGET_EXCEEDED = "T016";
+        public static final String T017_TRANSFORM_TIMEOUT_EXCEEDED = "T017";
+        public static final String T018_EXPRESSION_DEPTH_EXCEEDED = "T018";
 
         private TransformErrorCodes() {}
+    }
+
+    // Transform fuel budget exceeded (T016).
+    public static OdinTransformTypes.TransformError budgetExceededError(int limit) {
+        var error = new OdinTransformTypes.TransformError(
+                "Transform fuel budget exceeded (limit " + limit + ")");
+        error.setCode(TransformErrorCodes.T016_TRANSFORM_BUDGET_EXCEEDED);
+        return error;
+    }
+
+    // Transform wall-clock timeout exceeded (T017).
+    public static OdinTransformTypes.TransformError timeoutExceededError(int limitMs) {
+        var error = new OdinTransformTypes.TransformError(
+                "Transform timeout exceeded (limit " + limitMs + "ms)");
+        error.setCode(TransformErrorCodes.T017_TRANSFORM_TIMEOUT_EXCEEDED);
+        return error;
+    }
+
+    // Expression evaluation depth exceeded (T018).
+    public static OdinTransformTypes.TransformError expressionDepthExceededError(int limit) {
+        var error = new OdinTransformTypes.TransformError(
+                "Expression evaluation depth exceeded (limit " + limit + ")");
+        error.setCode(TransformErrorCodes.T018_EXPRESSION_DEPTH_EXCEEDED);
+        return error;
     }
 
     // Lookup key not found in a table (T004).

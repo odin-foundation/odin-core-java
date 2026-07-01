@@ -6,6 +6,7 @@ import foundation.odin.types.OdinTransformTypes.FieldExpression.*;
 import foundation.odin.types.OdinTransformTypes.VerbArg.*;
 import foundation.odin.types.OdinValue.*;
 import foundation.odin.transform.verbs.VerbHelpers;
+import foundation.odin.utils.SecurityLimits;
 
 import java.util.*;
 import java.util.function.BiFunction;
@@ -23,6 +24,43 @@ public final class TransformEngine {
             this.transformError = error;
         }
         TransformError getTransformError() { return transformError; }
+    }
+
+    // Execution guard abort (fuel, timeout, or depth). The onError policy never
+    // downgrades it; the execute boundary surfaces its error as a failed result.
+    private static final class TransformAbortException extends RuntimeException {
+        private final TransformError transformError;
+        TransformAbortException(TransformError error) {
+            super(error.getMessage());
+            this.transformError = error;
+        }
+        TransformError getTransformError() { return transformError; }
+    }
+
+    // Wall clock for the timeout guard, overridable so tests inject deterministic time.
+    static java.util.function.LongSupplier clock = System::currentTimeMillis;
+
+    // Read the wall clock once per this many charged units.
+    private static final int CLOCK_CHECK_INTERVAL = 1024;
+
+    // Verbs whose cost grows with an array argument. Charged proportional to the
+    // array width so large-array work cannot escape the budget at a flat unit.
+    private static final Set<String> SORT_VERBS = Set.of("sort");
+    private static final Set<String> WIDTH_VERBS = Set.of(
+            "distinct", "groupBy", "keyBy", "countBy", "reduce",
+            "sum", "avg", "min", "max", "count", "sumIf", "avgIf", "countIf",
+            "union", "intersection", "difference", "symmetricDifference",
+            "map", "filter", "window", "explode", "flatten", "reverse");
+
+    // Width of the first array-typed argument, or 0 if none.
+    private static int firstArrayWidth(DynValue[] args) {
+        for (var arg : args) {
+            if (arg != null && arg.getType() == DynValue.Type.Array) {
+                var items = arg.asArray();
+                return items != null ? items.size() : 0;
+            }
+        }
+        return 0;
     }
 
     // ── Per-Mapping Precompute ──
@@ -218,6 +256,15 @@ public final class TransformEngine {
         String onError;
         String onMissing;
         boolean strictTypes;
+
+        // Execution guard state. Fuel and timeout charge only when their cap is > 0.
+        int fuelCap;
+        int timeoutMs;
+        int maxExprDepth;
+        long fuelUsed;
+        int exprDepth;
+        int opsSinceClock;
+        long startTime;
     }
 
     // ── Transform Options ──
@@ -328,17 +375,21 @@ public final class TransformEngine {
         }
 
         boolean isFirstPass = true;
-        for (var passNum : passOrder) {
-            if (!isFirstPass) {
-                // Reset non-persist accumulators on pass change
-                for (var kvp : transform.getAccumulators().entrySet()) {
-                    if (!kvp.getValue().isPersist()) {
-                        ctx.accumulators.put(kvp.getKey(), odinValueToDyn(kvp.getValue().getInitial()));
+        try {
+            for (var passNum : passOrder) {
+                if (!isFirstPass) {
+                    // Reset non-persist accumulators on pass change
+                    for (var kvp : transform.getAccumulators().entrySet()) {
+                        if (!kvp.getValue().isPersist()) {
+                            ctx.accumulators.put(kvp.getKey(), odinValueToDyn(kvp.getValue().getInitial()));
+                        }
                     }
                 }
+                isFirstPass = false;
+                output = processSegmentList(byPass.get(passNum), ctx, output);
             }
-            isFirstPass = false;
-            output = processSegmentList(byPass.get(passNum), ctx, output);
+        } catch (TransformAbortException e) {
+            return abortResult(ctx, e, output);
         }
 
         // Confidential enforcement
@@ -363,6 +414,20 @@ public final class TransformEngine {
         result.setSuccess(ctx.errors.isEmpty());
         result.setOutput(output);
         result.setFormatted(formatted);
+        result.setErrors(ctx.errors);
+        result.setWarnings(ctx.warnings);
+        result.setOutputModifiers(ctx.fieldModifiers);
+        return result;
+    }
+
+    // Surface a guard abort as a failed result; the abort is never thrown past the
+    // execute boundary.
+    private static TransformResult abortResult(ExecContext ctx, TransformAbortException e, DynValue output) {
+        ctx.errors.add(e.getTransformError());
+        var result = new TransformResult();
+        result.setSuccess(false);
+        result.setOutput(output);
+        result.setFormatted("");
         result.setErrors(ctx.errors);
         result.setWarnings(ctx.warnings);
         result.setOutputModifiers(ctx.fieldModifiers);
@@ -505,6 +570,7 @@ public final class TransformEngine {
 
         // Process each record
         var lines = rawInput.split("[\\r\\n]+");
+        try {
         for (var line : lines) {
             if (line.trim().isEmpty()) continue;
 
@@ -555,6 +621,9 @@ public final class TransformEngine {
             } else {
                 mergeRecordIntoOutput(output, segName, recordOutput);
             }
+        }
+        } catch (TransformAbortException e) {
+            return abortResult(ctx, e, output);
         }
 
         // Merge array accumulators into output in segment order
@@ -629,6 +698,10 @@ public final class TransformEngine {
         ctx.strictTypes = transform.isStrictTypes();
         ctx.targetFormat = transform.getTarget() != null ? transform.getTarget().getFormat() : null;
         ctx.targetOptions = targetOpts;
+        ctx.fuelCap = SecurityLimits.MAX_TRANSFORM_FUEL;
+        ctx.timeoutMs = SecurityLimits.TRANSFORM_TIMEOUT_MS;
+        ctx.maxExprDepth = SecurityLimits.MAX_EXPRESSION_DEPTH;
+        if (ctx.timeoutMs > 0) ctx.startTime = clock.getAsLong();
         return ctx;
     }
 
@@ -811,6 +884,8 @@ public final class TransformEngine {
                                 rowOutput = val;
                             }
                             // else: side effect only (e.g., accumulate already happened during evaluation)
+                        } catch (TransformAbortException e) {
+                            throw e;
                         } catch (Exception e) {
                             ctx.errors.add(new TransformError("mapping '_': " + e.getMessage(), "_"));
                         }
@@ -996,6 +1071,8 @@ public final class TransformEngine {
                             var val = evaluateExpression(mapping.getExpression(), ctx, item, rowOutput);
                             val = applyMappingDirectives(val, mapping.getDirectives(), ctx.sourceFormat, mapping.getExpression());
                             if (isValueOnly) rowOutput = val;
+                        } catch (TransformAbortException e) {
+                            throw e;
                         } catch (Exception e) {
                             ctx.errors.add(new TransformError("mapping '_': " + e.getMessage(), "_"));
                         }
@@ -1089,6 +1166,8 @@ public final class TransformEngine {
             err.setCode(OdinErrors.TransformErrorCodes.T014_NESTED_INTERPOLATION);
             ctx.errors.add(err);
             return "";
+        } catch (TransformAbortException e) {
+            throw e;
         } catch (RuntimeException e) {
             // Verb and resolution failures honor the target onError policy.
             String onError = ctx.onError != null ? ctx.onError : "fail";
@@ -1247,6 +1326,9 @@ public final class TransformEngine {
                     ctx.fieldModifiers.put(fullKey, mapping.getModifiers());
                 }
             }
+        } catch (TransformAbortException e) {
+            // Guard aborts are not downgraded by onError.
+            throw e;
         } catch (CodedTransformException e) {
             // Coded errors carry a stable T-code; preserve it under fail/warn.
             var onError = ctx.onError != null ? ctx.onError : "fail";
@@ -1473,7 +1555,57 @@ public final class TransformEngine {
 
     // ── Expression Evaluation ──
 
+    // Guard boundary: enforce depth, charge one fuel unit, and batch the wall-clock
+    // check before delegating. All evaluation funnels through here, so charging
+    // stays concentrated at this single point.
     private static DynValue evaluateExpression(FieldExpression expr, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
+        if (++ctx.exprDepth > ctx.maxExprDepth) {
+            ctx.exprDepth--;
+            throw new TransformAbortException(OdinErrors.expressionDepthExceededError(ctx.maxExprDepth));
+        }
+        charge(ctx, 1);
+        try {
+            return evaluateExpressionInner(expr, ctx, currentSource, currentOutput);
+        } finally {
+            ctx.exprDepth--;
+        }
+    }
+
+    // Charge fuel and, at a coarse interval, the wall clock. Both are no-ops unless
+    // their cap is set (> 0), so unbounded transforms pay nothing.
+    private static void charge(ExecContext ctx, long units) {
+        if (ctx.fuelCap > 0) {
+            ctx.fuelUsed += units;
+            if (ctx.fuelUsed > ctx.fuelCap) {
+                throw new TransformAbortException(OdinErrors.budgetExceededError(ctx.fuelCap));
+            }
+        }
+        if (ctx.timeoutMs > 0) {
+            ctx.opsSinceClock += units;
+            if (ctx.opsSinceClock >= CLOCK_CHECK_INTERVAL) {
+                ctx.opsSinceClock = 0;
+                if (clock.getAsLong() - ctx.startTime > ctx.timeoutMs) {
+                    throw new TransformAbortException(OdinErrors.timeoutExceededError(ctx.timeoutMs));
+                }
+            }
+        }
+    }
+
+    // Charge width for a verb doing O(n)/O(n log n) work over an array argument.
+    // Runs whenever fuel or timeout is set, so a timeout-only host can interrupt
+    // a single wide-array verb.
+    private static void chargeVerbWidth(ExecContext ctx, String verb, DynValue[] args) {
+        if (ctx.fuelCap <= 0 && ctx.timeoutMs <= 0) return;
+        int n = firstArrayWidth(args);
+        if (n <= 0) return;
+        if (SORT_VERBS.contains(verb)) {
+            charge(ctx, (long) n * (long) Math.ceil(Math.log(Math.max(n, 2)) / Math.log(2)));
+        } else if (WIDTH_VERBS.contains(verb)) {
+            charge(ctx, n);
+        }
+    }
+
+    private static DynValue evaluateExpressionInner(FieldExpression expr, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
         return switch (expr) {
             case CopyExpression copy -> {
                 var path = copy.getPath();
@@ -1560,6 +1692,21 @@ public final class TransformEngine {
             "ifElse", "ifNull", "ifEmpty", "coalesce", "and", "or", "cond", "switch");
 
     private static DynValue executeVerbCall(VerbCall call, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
+        // Guard boundary: nested verb calls recurse through here, so enforce depth
+        // and charge one unit per call node.
+        if (++ctx.exprDepth > ctx.maxExprDepth) {
+            ctx.exprDepth--;
+            throw new TransformAbortException(OdinErrors.expressionDepthExceededError(ctx.maxExprDepth));
+        }
+        charge(ctx, 1);
+        try {
+            return executeVerbCallInner(call, ctx, currentSource, currentOutput);
+        } finally {
+            ctx.exprDepth--;
+        }
+    }
+
+    private static DynValue executeVerbCallInner(VerbCall call, ExecContext ctx, DynValue currentSource, DynValue currentOutput) {
         // Strict mode validates all argument types, so it evaluates eagerly.
         if (!call.isCustom() && !ctx.strictTypes && LAZY_VERBS.contains(call.getVerb())) {
             var lazy = evaluateLazyVerb(call, ctx, currentSource, currentOutput);
@@ -1571,6 +1718,7 @@ public final class TransformEngine {
         for (int i = 0; i < call.getArgs().size(); i++) {
             evaluatedArgs[i] = evaluateVerbArg(call.getArgs().get(i), ctx, currentSource, currentOutput);
         }
+        chargeVerbWidth(ctx, call.getVerb(), evaluatedArgs);
 
         // Look up verb
         var verbFn = ctx.verbs.get(call.getVerb());
